@@ -41,9 +41,7 @@ impl SocorroClient {
             StatusCode::NOT_FOUND => Err(Error::NotFound(crash_id.to_string())),
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
             _ => Err(Error::Http(
-                reqwest::Error::from(
-                    response.error_for_status().unwrap_err()
-                )
+                response.error_for_status().unwrap_err()
             )),
         }
     }

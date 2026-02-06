@@ -62,7 +62,7 @@ pub fn format_crash(summary: &CrashSummary) -> String {
     ));
 
     if !summary.all_threads.is_empty() {
-        output.push_str("\n");
+        output.push('\n');
         for thread in &summary.all_threads {
             let thread_name = thread.thread_name.as_deref().unwrap_or("unknown");
             let crash_marker = if thread.is_crashing { " [CRASHING]" } else { "" };
@@ -77,10 +77,10 @@ pub fn format_crash(summary: &CrashSummary) -> String {
                 };
                 output.push_str(&format!("  #{} {}{}\n", frame.frame, func, location));
             }
-            output.push_str("\n");
+            output.push('\n');
         }
     } else if !summary.frames.is_empty() {
-        output.push_str("\n");
+        output.push('\n');
         let thread_name = summary.crashing_thread_name.as_deref().unwrap_or("unknown");
         output.push_str(&format!("stack[{}]:\n", thread_name));
 

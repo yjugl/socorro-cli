@@ -22,7 +22,7 @@ fn format_function(frame: &StackFrame) -> String {
 pub fn format_crash(summary: &CrashSummary) -> String {
     let mut output = String::new();
 
-    output.push_str(&format!("# Crash Report\n\n"));
+    output.push_str(&"# Crash Report\n\n".to_string());
     output.push_str(&format!("**Crash ID:** `{}`\n\n", summary.crash_id));
     output.push_str(&format!("**Signature:** `{}`\n\n", summary.signature));
 
@@ -104,7 +104,7 @@ pub fn format_crash(summary: &CrashSummary) -> String {
 pub fn format_search(response: &SearchResponse) -> String {
     let mut output = String::new();
 
-    output.push_str(&format!("# Search Results\n\n"));
+    output.push_str(&"# Search Results\n\n".to_string());
     output.push_str(&format!("Found **{}** crashes\n\n", response.total));
 
     if !response.hits.is_empty() {
@@ -122,7 +122,7 @@ pub fn format_search(response: &SearchResponse) -> String {
                 hit.signature
             ));
         }
-        output.push_str("\n");
+        output.push('\n');
     }
 
     if !response.facets.is_empty() {
@@ -132,7 +132,7 @@ pub fn format_search(response: &SearchResponse) -> String {
             for bucket in buckets {
                 output.push_str(&format!("- **{}**: {} crashes\n", bucket.term, bucket.count));
             }
-            output.push_str("\n");
+            output.push('\n');
         }
     }
 
