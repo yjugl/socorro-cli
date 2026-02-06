@@ -4,6 +4,26 @@ A Rust CLI tool for querying Mozilla's Socorro crash reporting system, optimized
 
 Written by Claude Code *NOT YET REVIEWED THOROUGHLY***.
 
+If you're a human user, you probably want
+[crashstats-tools](https://github.com/mozilla-services/crashstats-tools)
+instead. It's the official Python CLI maintained by Mozilla with more features
+for interactive use.
+
+| Feature | socorro-cli | crashstats-tools |
+|---------|-------------|------------------|
+| **Target audience** | AI agents | Humans |
+| **Output format** | Token-optimized (compact) | Human-readable tables |
+| **Token security** | Keychain storage (hidden from AI) | Environment variable |
+| **Query interface** | Curated CLI options | Arbitrary Super Search fields |
+| **Download raw data** | No | Yes (raw crashes, minidumps) |
+| **Reprocess crashes** | No | Yes |
+| **Super Search URL** | No | Yes (copy-paste from web UI) |
+
+socorro-cli exists because AI agents benefit from:
+- Compact output that minimizes token usage
+- Secure token storage that prevents the AI from reading credentials
+- Simplified options that reduce prompt complexity
+
 ## Installation
 
 ```bash

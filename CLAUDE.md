@@ -130,3 +130,21 @@ The test suite (45 tests) covers:
 - **Auth token file**: Reading from `SOCORRO_API_TOKEN_PATH`, whitespace handling, missing file handling
 
 Note: HTTP-level tests (404, 429, network errors) would require mocking the reqwest client and are not currently implemented.
+
+## Future Improvements
+
+Features inspired by [crashstats-tools](https://github.com/mozilla-services/crashstats-tools) that could benefit AI agents (all use public API, no special permissions required):
+
+1. **`--supersearch-url` parameter**: Accept a Socorro web UI search URL directly, parse supported parameters, and warn about unsupported ones. Allows humans to share search URLs with AI agents.
+
+2. **`--modules-in-stack` filter**: Find crashes where a specific module appears in the stack. Supports wildcards (e.g., `--modules-in-stack='^libgallium_dri.so'`).
+
+3. **`--columns` selection**: Specify which fields to return in search results, reducing token output (e.g., `--columns uuid,signature,build_id`).
+
+4. **Histogram aggregations**: Get crash counts per day broken down by a field (`--histogram-date=product`). Useful for trend analysis.
+
+5. **Cardinality queries**: Count distinct values of a field (`--facet=_cardinality.build_id`). Example: "how many different build IDs have this crash?"
+
+6. **Nested aggregations**: Multi-level drill-downs (`--aggs=product.version.release_channel`) for deeper analysis.
+
+7. **`--crash-report-keys` filter**: Find crashes containing specific annotations that may not be searchable yet. Useful when investigating newly-added Firefox annotations.
