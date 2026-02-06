@@ -22,7 +22,7 @@ fn format_function(frame: &StackFrame) -> String {
 pub fn format_crash(summary: &CrashSummary) -> String {
     let mut output = String::new();
 
-    output.push_str(&"# Crash Report\n\n".to_string());
+    output.push_str("# Crash Report\n\n");
     output.push_str(&format!("**Crash ID:** `{}`\n\n", summary.crash_id));
     output.push_str(&format!("**Signature:** `{}`\n\n", summary.signature));
 
@@ -104,7 +104,7 @@ pub fn format_crash(summary: &CrashSummary) -> String {
 pub fn format_search(response: &SearchResponse) -> String {
     let mut output = String::new();
 
-    output.push_str(&"# Search Results\n\n".to_string());
+    output.push_str("# Search Results\n\n");
     output.push_str(&format!("Found **{}** crashes\n\n", response.total));
 
     if !response.hits.is_empty() {
@@ -137,4 +137,144 @@ pub fn format_search(response: &SearchResponse) -> String {
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{CrashSummary, CrashHit, FacetBucket, ThreadSummary};
+    use std::collections::HashMap;
+
+    fn sample_crash_summary() -> CrashSummary {
+        CrashSummary {
+            crash_id: "247653e8-7a18-4836-97d1-42a720260120".to_string(),
+            signature: "mozilla::AudioDecoderInputTrack::EnsureTimeStretcher".to_string(),
+            reason: Some("SIGSEGV".to_string()),
+            address: Some("0x0".to_string()),
+            moz_crash_reason: Some("MOZ_RELEASE_ASSERT(mTimeStretcher->Init())".to_string()),
+            abort_message: None,
+            product: "Fenix".to_string(),
+            version: "147.0.1".to_string(),
+            platform: "Android 36".to_string(),
+            android_version: Some("36".to_string()),
+            android_model: Some("SM-S918B".to_string()),
+            crashing_thread_name: Some("GraphRunner".to_string()),
+            frames: vec![
+                StackFrame {
+                    frame: 0,
+                    function: Some("EnsureTimeStretcher".to_string()),
+                    file: Some("AudioDecoderInputTrack.cpp".to_string()),
+                    line: Some(624),
+                    module: None,
+                    offset: None,
+                },
+            ],
+            all_threads: vec![],
+        }
+    }
+
+    #[test]
+    fn test_format_crash_markdown_header() {
+        let summary = sample_crash_summary();
+        let output = format_crash(&summary);
+
+        assert!(output.contains("# Crash Report"));
+        assert!(output.contains("**Crash ID:** `247653e8-7a18-4836-97d1-42a720260120`"));
+        assert!(output.contains("**Signature:** `mozilla::AudioDecoderInputTrack::EnsureTimeStretcher`"));
+    }
+
+    #[test]
+    fn test_format_crash_markdown_details() {
+        let summary = sample_crash_summary();
+        let output = format_crash(&summary);
+
+        assert!(output.contains("## Details"));
+        assert!(output.contains("- **Crash Reason:** SIGSEGV at `0x0` (null pointer)"));
+        assert!(output.contains("- **Mozilla Crash Reason:** MOZ_RELEASE_ASSERT(mTimeStretcher->Init())"));
+    }
+
+    #[test]
+    fn test_format_crash_markdown_product_info() {
+        let summary = sample_crash_summary();
+        let output = format_crash(&summary);
+
+        assert!(output.contains("- **Product:** Fenix 147.0.1"));
+        assert!(output.contains("- **Platform:** Android 36 on SM-S918B (Android 36)"));
+    }
+
+    #[test]
+    fn test_format_crash_markdown_stack_trace() {
+        let summary = sample_crash_summary();
+        let output = format_crash(&summary);
+
+        assert!(output.contains("## Stack Trace (GraphRunner)"));
+        assert!(output.contains("```"));
+        assert!(output.contains("#0 EnsureTimeStretcher @ AudioDecoderInputTrack.cpp:624"));
+    }
+
+    #[test]
+    fn test_format_crash_markdown_all_threads() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![
+            ThreadSummary {
+                thread_index: 0,
+                thread_name: Some("MainThread".to_string()),
+                frames: vec![],
+                is_crashing: false,
+            },
+            ThreadSummary {
+                thread_index: 1,
+                thread_name: Some("GraphRunner".to_string()),
+                frames: vec![],
+                is_crashing: true,
+            },
+        ];
+        let output = format_crash(&summary);
+
+        assert!(output.contains("## All Threads"));
+        assert!(output.contains("### Thread 0 (MainThread)"));
+        assert!(output.contains("### Thread 1 (GraphRunner) **[CRASHING]**"));
+    }
+
+    #[test]
+    fn test_format_search_markdown_basic() {
+        let response = SearchResponse {
+            total: 42,
+            hits: vec![
+                CrashHit {
+                    uuid: "247653e8-7a18-4836-97d1-42a720260120".to_string(),
+                    date: "2024-01-15".to_string(),
+                    signature: "mozilla::SomeFunction".to_string(),
+                    product: "Firefox".to_string(),
+                    version: "120.0".to_string(),
+                    os_name: Some("Windows".to_string()),
+                },
+            ],
+            facets: HashMap::new(),
+        };
+        let output = format_search(&response);
+
+        assert!(output.contains("# Search Results"));
+        assert!(output.contains("Found **42** crashes"));
+        assert!(output.contains("## Crashes"));
+        assert!(output.contains("| Crash ID | Product | Version | Platform | Signature |"));
+    }
+
+    #[test]
+    fn test_format_search_markdown_with_facets() {
+        let mut facets = HashMap::new();
+        facets.insert("version".to_string(), vec![
+            FacetBucket { term: "120.0".to_string(), count: 50 },
+        ]);
+        let response = SearchResponse {
+            total: 50,
+            hits: vec![],
+            facets,
+        };
+        let output = format_search(&response);
+
+        assert!(output.contains("## Aggregations"));
+        assert!(output.contains("### version"));
+        assert!(output.contains("- **120.0**: 50 crashes"));
+    }
 }

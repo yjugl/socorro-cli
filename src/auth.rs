@@ -106,3 +106,84 @@ pub fn delete_token() -> Result<()> {
 pub fn has_token() -> bool {
     get_token().is_some()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn test_get_from_token_file_reads_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let token_path = dir.path().join("token");
+        std::fs::write(&token_path, "my_secret_token").unwrap();
+
+        // Set the env var and test
+        std::env::set_var(TOKEN_PATH_ENV_VAR, token_path.to_str().unwrap());
+        let result = get_from_token_file();
+        std::env::remove_var(TOKEN_PATH_ENV_VAR);
+
+        assert_eq!(result, Some("my_secret_token".to_string()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_from_token_file_trims_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let token_path = dir.path().join("token");
+        std::fs::write(&token_path, "  my_token_with_whitespace  \n").unwrap();
+
+        std::env::set_var(TOKEN_PATH_ENV_VAR, token_path.to_str().unwrap());
+        let result = get_from_token_file();
+        std::env::remove_var(TOKEN_PATH_ENV_VAR);
+
+        assert_eq!(result, Some("my_token_with_whitespace".to_string()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_from_token_file_returns_none_for_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let token_path = dir.path().join("token");
+        std::fs::write(&token_path, "").unwrap();
+
+        std::env::set_var(TOKEN_PATH_ENV_VAR, token_path.to_str().unwrap());
+        let result = get_from_token_file();
+        std::env::remove_var(TOKEN_PATH_ENV_VAR);
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_from_token_file_returns_none_for_whitespace_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let token_path = dir.path().join("token");
+        std::fs::write(&token_path, "   \n\t  ").unwrap();
+
+        std::env::set_var(TOKEN_PATH_ENV_VAR, token_path.to_str().unwrap());
+        let result = get_from_token_file();
+        std::env::remove_var(TOKEN_PATH_ENV_VAR);
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_from_token_file_returns_none_for_missing_file() {
+        std::env::set_var(TOKEN_PATH_ENV_VAR, "/nonexistent/path/to/token");
+        let result = get_from_token_file();
+        std::env::remove_var(TOKEN_PATH_ENV_VAR);
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_from_token_file_returns_none_when_env_not_set() {
+        std::env::remove_var(TOKEN_PATH_ENV_VAR);
+        let result = get_from_token_file();
+        assert_eq!(result, None);
+    }
+}

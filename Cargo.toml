@@ -24,3 +24,7 @@ thiserror = "2"
 chrono = "0.4"
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 rpassword = "7"
+
+[dev-dependencies]
+tempfile = "3"
+serial_test = "3"

@@ -28,6 +28,9 @@ socorro-cli search --signature "term"
 
 # API token is managed via keychain or token file (see Authentication section)
 
+# Run tests
+cargo test
+
 # Format code
 cargo fmt
 
@@ -113,8 +116,21 @@ With `--all-threads`, it formats all threads (marking the crashing one), useful 
 
 ## Testing
 
-Currently no test suite exists. When adding tests:
-- Mock Socorro API responses for reproducible tests
-- Test crash ID extraction (bare IDs and URLs)
-- Test output formatters with known crash data
-- Test error handling (404, 429, parse errors)
+Run tests with:
+```bash
+cargo test
+```
+
+The test suite (45 tests) covers:
+- **Crash ID extraction**: Bare IDs, full URLs, URLs with trailing slashes
+- **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode
+- **Search models**: SearchResponse/CrashHit deserialization, facets parsing
+- **Output formatters**: Compact and Markdown formatters for crash and search output
+- **Client validation**: Crash ID format validation (rejects invalid characters, potential injection attempts)
+- **Auth token file**: Reading from `SOCORRO_API_TOKEN_PATH`, whitespace handling, missing file handling
+
+Note: HTTP-level tests (404, 429, network errors) would require mocking the reqwest client and are not currently implemented.
+
+## Known Issues
+
+- **clippy::too_many_arguments**: The `commands::search::execute()` function has 10 parameters. A future refactor should introduce a `SearchOptions` struct to group these.
