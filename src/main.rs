@@ -90,18 +90,17 @@ fn main() -> Result<()> {
         }
         Commands::Search { signature, product, version, platform, days, limit, facet, sort } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
-            socorro_cli::commands::search::execute(
-                &client,
+            let params = socorro_cli::models::SearchParams {
                 signature,
                 product,
                 version,
                 platform,
                 days,
                 limit,
-                facet,
+                facets: facet,
                 sort,
-                cli.format,
-            )?;
+            };
+            socorro_cli::commands::search::execute(&client, params, cli.format)?;
         }
     }
 

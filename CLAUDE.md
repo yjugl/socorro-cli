@@ -130,7 +130,3 @@ The test suite (45 tests) covers:
 - **Auth token file**: Reading from `SOCORRO_API_TOKEN_PATH`, whitespace handling, missing file handling
 
 Note: HTTP-level tests (404, 429, network errors) would require mocking the reqwest client and are not currently implemented.
-
-## Known Issues
-
-- **clippy::too_many_arguments**: The `commands::search::execute()` function has 10 parameters. A future refactor should introduce a `SearchOptions` struct to group these.
