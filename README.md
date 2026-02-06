@@ -10,6 +10,63 @@ Written by Claude Code *NOT YET REVIEWED THOROUGHLY***.
 cargo install --path .
 ```
 
+## Configuration
+
+### API Token
+
+For higher rate limits, API tokens can be used. Humans can create an API token
+at https://crash-stats.mozilla.org/api/tokens/ (requires login). Tokens for use
+by socorro-cli must be created **without any permission attached to them**,
+which still provides rate limit benefits (and only that).
+
+Whenever possible, tokens should not be directly shared with an AI agent nor
+stored in a location that's easily accessible to an AI agent. We recommend
+using:
+
+```bash
+# Store token securely (for humans, prompts for token, input is hidden)
+socorro-cli auth login
+
+# Check if a token is stored (for humans or AI agents)
+socorro-cli auth status
+
+# Remove stored token (for humans)
+socorro-cli auth logout
+```
+
+In that case, the token is stored in the operating system's secure credential
+storage:
+- **macOS**: Keychain
+- **Windows**: Credential Manager
+- **Linux**: Secret Service (GNOME Keyring, KWallet, etc.)
+
+### CI/Headless Environments
+
+Some environments lack a system keychain (Docker containers, CI systems like
+TaskCluster, SSH sessions, headless servers). For these cases, use the
+`SOCORRO_API_TOKEN_PATH` environment variable to point to a file containing
+the token:
+
+```bash
+# Create token file (outside project directory, restricted permissions)
+echo "your_token_here" > ~/.socorro-token
+chmod 600 ~/.socorro-token
+
+# Set the environment variable to the file path
+export SOCORRO_API_TOKEN_PATH=~/.socorro-token
+```
+
+**Security note**: The token file should be stored in a location that AI agents
+cannot read. Recommended practices:
+- Store outside the project directory (e.g., `~/.socorro-token`)
+- Use restrictive file permissions (`chmod 600`)
+- Never commit the token file or its path to version control
+- Consider using a path outside directories typically allowed for AI agents
+
+The CLI checks the keychain first, falling back to reading from the file
+specified by `SOCORRO_API_TOKEN_PATH` only if the keychain is unavailable or
+empty.
+
 ## Usage
 
 ### Crash Command
@@ -73,25 +130,10 @@ Full structured data for programmatic processing.
 ### Markdown
 Formatted output for documentation and chat interfaces.
 
-## Configuration
-
-### API Token
-
-For higher rate limits, set an API token:
-
-```bash
-# Via environment variable
-export SOCORRO_API_TOKEN=your_token_here
-
-# Or pass directly
-socorro-cli --token your_token_here crash <crash-id>
-```
-
 ## Options
 
 ### Global Options
 - `--format <FORMAT>`: Output format (compact, json, markdown) [default: compact]
-- `--token <TOKEN>`: Socorro API token (or set SOCORRO_API_TOKEN env var)
 
 ### Crash Options
 - `--depth <N>`: Stack trace depth [default: 10]

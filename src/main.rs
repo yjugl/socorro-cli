@@ -8,15 +8,18 @@ struct Cli {
     #[arg(long, value_enum, default_value = "compact", global = true)]
     format: OutputFormat,
 
-    #[arg(long, env = "SOCORRO_API_TOKEN", global = true)]
-    token: Option<String>,
-
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Manage API token stored in system keychain
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
+    /// Fetch details about a specific crash
     Crash {
         crash_id: String,
 
@@ -32,6 +35,7 @@ enum Commands {
         #[arg(long)]
         modules: bool,
     },
+    /// Search and aggregate crashes
     Search {
         #[arg(long)]
         signature: Option<String>,
@@ -59,19 +63,33 @@ enum Commands {
     },
 }
 
+#[derive(Subcommand)]
+enum AuthAction {
+    /// Store API token in system keychain
+    Login,
+    /// Remove API token from system keychain
+    Logout,
+    /// Check if API token is stored
+    Status,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let client = SocorroClient::new(
-        "https://crash-stats.mozilla.org/api".to_string(),
-        cli.token,
-    );
-
     match cli.command {
+        Commands::Auth { action } => {
+            match action {
+                AuthAction::Login => socorro_cli::commands::auth::login()?,
+                AuthAction::Logout => socorro_cli::commands::auth::logout()?,
+                AuthAction::Status => socorro_cli::commands::auth::status()?,
+            }
+        }
         Commands::Crash { crash_id, depth, full, all_threads, modules } => {
+            let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             socorro_cli::commands::crash::execute(&client, &crash_id, depth, full, all_threads, modules, cli.format)?;
         }
         Commands::Search { signature, product, version, platform, days, limit, facet, sort } => {
+            let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             socorro_cli::commands::search::execute(
                 &client,
                 signature,

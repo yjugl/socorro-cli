@@ -1,21 +1,23 @@
-use crate::{Error, Result};
+use crate::{auth, Error, Result};
 use crate::models::{ProcessedCrash, SearchResponse, SearchParams};
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
 
 pub struct SocorroClient {
     base_url: String,
-    token: Option<String>,
     client: Client,
 }
 
 impl SocorroClient {
-    pub fn new(base_url: String, token: Option<String>) -> Self {
+    pub fn new(base_url: String) -> Self {
         Self {
             base_url,
-            token,
             client: Client::new(),
         }
+    }
+
+    fn get_auth_header(&self) -> Option<String> {
+        auth::get_token()
     }
 
     pub fn get_crash(&self, crash_id: &str) -> Result<ProcessedCrash> {
@@ -26,7 +28,7 @@ impl SocorroClient {
         let url = format!("{}/ProcessedCrash/", self.base_url);
         let mut request = self.client.get(&url).query(&[("crash_id", crash_id)]);
 
-        if let Some(token) = &self.token {
+        if let Some(token) = self.get_auth_header() {
             request = request.header("Auth-Token", token);
         }
 
@@ -79,7 +81,7 @@ impl SocorroClient {
             request = request.query(&[(key, value)]);
         }
 
-        if let Some(token) = &self.token {
+        if let Some(token) = self.get_auth_header() {
             request = request.header("Auth-Token", token);
         }
 
