@@ -72,6 +72,10 @@ impl SocorroClient {
             query_params.push(("platform", plat));
         }
 
+        if let Some(arch) = params.cpu_arch {
+            query_params.push(("cpu_arch", arch));
+        }
+
         for facet in params.facets {
             query_params.push(("_facets", facet));
         }

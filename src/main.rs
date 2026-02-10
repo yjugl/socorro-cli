@@ -86,6 +86,9 @@ EXAMPLES:
     # Find Windows crashes for a specific version
     socorro-cli search --product Firefox --platform Windows --version 120.0
 
+    # Find crashes on ARM64 architecture
+    socorro-cli search --product Firefox --cpu-arch aarch64
+
 SIGNATURE PATTERNS:
     Exact match:  --signature \"OOM | small\"
     Contains:     --signature \"~AudioDecoder\" (use ~ prefix)
@@ -94,7 +97,10 @@ PRODUCTS:
     Firefox, Fenix, Thunderbird, Firefox Focus, etc.
 
 PLATFORMS:
-    Windows, Linux, Mac OS X, Android";
+    Windows, Linux, Mac OS X, Android
+
+CPU ARCHITECTURES:
+    amd64, x86, aarch64, arm";
 
 #[derive(Subcommand)]
 enum Commands {
@@ -147,6 +153,10 @@ enum Commands {
         #[arg(long)]
         platform: Option<String>,
 
+        /// Filter by CPU architecture (amd64, x86, aarch64, arm)
+        #[arg(long)]
+        cpu_arch: Option<String>,
+
         /// Search crashes from the last N days
         #[arg(long, default_value = "7")]
         days: u32,
@@ -190,13 +200,14 @@ fn main() -> Result<()> {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             socorro_cli::commands::crash::execute(&client, &crash_id, depth, full, all_threads, modules, cli.format)?;
         }
-        Commands::Search { signature, product, version, platform, days, limit, facet, sort } => {
+        Commands::Search { signature, product, version, platform, cpu_arch, days, limit, facet, sort } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             let params = socorro_cli::models::SearchParams {
                 signature,
                 product,
                 version,
                 platform,
+                cpu_arch,
                 days,
                 limit,
                 facets: facet,
