@@ -15,6 +15,8 @@ pub struct ProcessedCrash {
     #[serde(default)]
     pub build: Option<String>,
     #[serde(default)]
+    pub release_channel: Option<String>,
+    #[serde(default)]
     pub os_version: Option<String>,
 
     #[serde(default)]
@@ -72,6 +74,7 @@ pub struct CrashSummary {
     pub product: String,
     pub version: String,
     pub build_id: Option<String>,
+    pub release_channel: Option<String>,
     pub platform: String,
 
     pub android_version: Option<String>,
@@ -151,6 +154,7 @@ impl ProcessedCrash {
             product: self.product.clone().unwrap_or_else(|| "Unknown".to_string()),
             version: self.version.clone().unwrap_or_else(|| "Unknown".to_string()),
             build_id: self.build.clone(),
+            release_channel: self.release_channel.clone(),
             platform: format!(
                 "{}{}",
                 self.os_name.as_deref().unwrap_or("Unknown"),
