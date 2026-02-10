@@ -69,7 +69,7 @@ impl SocorroClient {
         }
 
         if let Some(plat) = params.platform {
-            query_params.push(("os_name", plat));
+            query_params.push(("platform", plat));
         }
 
         for facet in params.facets {
