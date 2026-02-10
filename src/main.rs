@@ -102,7 +102,15 @@ PLATFORMS:
     Windows, Linux, Mac OS X, Android
 
 CPU ARCHITECTURES:
-    amd64, x86, aarch64, arm";
+    amd64, x86, aarch64, arm
+
+OUTPUT FIELDS:
+    crash_id    - Short crash UUID (first 8 chars)
+    product     - Product name and version
+    platform    - Operating system name
+    channel     - Release channel (release, beta, nightly, esr)
+    build_id    - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
+    signature   - Crash signature";
 
 #[derive(Subcommand)]
 enum Commands {

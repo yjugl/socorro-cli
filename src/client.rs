@@ -57,6 +57,10 @@ impl SocorroClient {
             ("_sort", params.sort),
         ];
 
+        for col in ["uuid", "date", "signature", "product", "version", "os_name", "build_id", "release_channel"] {
+            query_params.push(("_columns", col.to_string()));
+        }
+
         let days_ago = chrono::Utc::now() - chrono::Duration::days(params.days as i64);
         query_params.push(("date", format!(">={}", days_ago.format("%Y-%m-%d"))));
 

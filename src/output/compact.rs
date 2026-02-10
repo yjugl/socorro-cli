@@ -219,6 +219,8 @@ mod tests {
                     product: "Firefox".to_string(),
                     version: "120.0".to_string(),
                     os_name: Some("Windows".to_string()),
+                    build_id: Some("20240115103000".to_string()),
+                    release_channel: Some("release".to_string()),
                 },
             ],
             facets: HashMap::new(),
@@ -298,12 +300,16 @@ pub fn format_search(response: &SearchResponse) -> String {
     output.push_str(&format!("FOUND {} crashes\n\n", response.total));
 
     for hit in &response.hits {
-        let platform = hit.os_name.as_deref().unwrap_or("Unknown");
-        output.push_str(&format!("{} | {} {} | {} | {}\n",
+        let platform = hit.os_name.as_deref().unwrap_or("?");
+        let channel = hit.release_channel.as_deref().unwrap_or("?");
+        let build = hit.build_id.as_deref().unwrap_or("?");
+        output.push_str(&format!("{} | {} {} | {} | {} | {} | {}\n",
             &hit.uuid[..8],
             hit.product,
             hit.version,
             platform,
+            channel,
+            build,
             hit.signature
         ));
     }

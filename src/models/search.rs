@@ -18,6 +18,10 @@ pub struct CrashHit {
     pub version: String,
     #[serde(default)]
     pub os_name: Option<String>,
+    #[serde(default)]
+    pub build_id: Option<String>,
+    #[serde(default)]
+    pub release_channel: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

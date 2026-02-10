@@ -115,16 +115,20 @@ pub fn format_search(response: &SearchResponse) -> String {
 
     if !response.hits.is_empty() {
         output.push_str("## Crashes\n\n");
-        output.push_str("| Crash ID | Product | Version | Platform | Signature |\n");
-        output.push_str("|----------|---------|---------|----------|----------|\n");
+        output.push_str("| Crash ID | Product | Version | Platform | Channel | Build ID | Signature |\n");
+        output.push_str("|----------|---------|---------|----------|---------|----------|----------|\n");
 
         for hit in &response.hits {
-            let platform = hit.os_name.as_deref().unwrap_or("Unknown");
-            output.push_str(&format!("| {} | {} | {} | {} | {} |\n",
+            let platform = hit.os_name.as_deref().unwrap_or("?");
+            let channel = hit.release_channel.as_deref().unwrap_or("?");
+            let build = hit.build_id.as_deref().unwrap_or("?");
+            output.push_str(&format!("| {} | {} | {} | {} | {} | {} | {} |\n",
                 &hit.uuid[..8],
                 hit.product,
                 hit.version,
                 platform,
+                channel,
+                build,
                 hit.signature
             ));
         }
@@ -256,6 +260,8 @@ mod tests {
                     product: "Firefox".to_string(),
                     version: "120.0".to_string(),
                     os_name: Some("Windows".to_string()),
+                    build_id: Some("20240115103000".to_string()),
+                    release_channel: Some("release".to_string()),
                 },
             ],
             facets: HashMap::new(),
@@ -265,7 +271,7 @@ mod tests {
         assert!(output.contains("# Search Results"));
         assert!(output.contains("Found **42** crashes"));
         assert!(output.contains("## Crashes"));
-        assert!(output.contains("| Crash ID | Product | Version | Platform | Signature |"));
+        assert!(output.contains("| Crash ID | Product | Version | Platform | Channel | Build ID | Signature |"));
     }
 
     #[test]
