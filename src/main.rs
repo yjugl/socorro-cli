@@ -105,7 +105,7 @@ CPU ARCHITECTURES:
     amd64, x86, aarch64, arm
 
 OUTPUT FIELDS:
-    crash_id    - Short crash UUID (first 8 chars)
+    crash_id    - Full crash UUID (usable with 'socorro-cli crash')
     product     - Product name and version
     platform    - Operating system name
     channel     - Release channel (release, beta, nightly, esr)

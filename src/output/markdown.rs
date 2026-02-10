@@ -123,7 +123,7 @@ pub fn format_search(response: &SearchResponse) -> String {
             let channel = hit.release_channel.as_deref().unwrap_or("?");
             let build = hit.build_id.as_deref().unwrap_or("?");
             output.push_str(&format!("| {} | {} | {} | {} | {} | {} | {} |\n",
-                &hit.uuid[..8],
+                hit.uuid,
                 hit.product,
                 hit.version,
                 platform,
