@@ -119,7 +119,7 @@ pub fn format_search(response: &SearchResponse) -> String {
         output.push_str("|----------|---------|---------|----------|---------|----------|----------|\n");
 
         for hit in &response.hits {
-            let platform = hit.os_name.as_deref().unwrap_or("?");
+            let platform = hit.platform.as_deref().unwrap_or("?");
             let channel = hit.release_channel.as_deref().unwrap_or("?");
             let build = hit.build_id.as_deref().unwrap_or("?");
             output.push_str(&format!("| {} | {} | {} | {} | {} | {} | {} |\n",
@@ -259,7 +259,7 @@ mod tests {
                     signature: "mozilla::SomeFunction".to_string(),
                     product: "Firefox".to_string(),
                     version: "120.0".to_string(),
-                    os_name: Some("Windows".to_string()),
+                    platform: Some("Windows".to_string()),
                     build_id: Some("20240115103000".to_string()),
                     release_channel: Some("release".to_string()),
                 },

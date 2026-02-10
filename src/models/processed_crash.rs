@@ -1,17 +1,5 @@
-use serde::{Deserialize, Deserializer, Serialize};
-use super::StackFrame;
-
-fn deserialize_string_or_number<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
-    Ok(value.map(|v| match v {
-        serde_json::Value::String(s) => s,
-        serde_json::Value::Number(n) => n.to_string(),
-        other => other.to_string(),
-    }))
-}
+use serde::{Deserialize, Serialize};
+use super::{StackFrame, common::deserialize_string_or_number};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProcessedCrash {

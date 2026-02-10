@@ -57,7 +57,7 @@ impl SocorroClient {
             ("_sort", params.sort),
         ];
 
-        for col in ["uuid", "date", "signature", "product", "version", "os_name", "build_id", "release_channel"] {
+        for col in ["uuid", "date", "signature", "product", "version", "platform", "build_id", "release_channel"] {
             query_params.push(("_columns", col.to_string()));
         }
 

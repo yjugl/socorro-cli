@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use super::common::deserialize_string_or_number;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResponse {
@@ -17,8 +18,8 @@ pub struct CrashHit {
     pub product: String,
     pub version: String,
     #[serde(default)]
-    pub os_name: Option<String>,
-    #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_string_or_number")]
     pub build_id: Option<String>,
     #[serde(default)]
     pub release_channel: Option<String>,
@@ -57,7 +58,7 @@ mod tests {
                     "signature": "mozilla::SomeFunction",
                     "product": "Firefox",
                     "version": "120.0",
-                    "os_name": "Windows"
+                    "platform": "Windows"
                 }
             ],
             "facets": {}
@@ -99,7 +100,7 @@ mod tests {
     }
 
     #[test]
-    fn test_deserialize_crash_hit_missing_os() {
+    fn test_deserialize_crash_hit_missing_platform() {
         let json = r#"{
             "uuid": "test-id",
             "date": "2024-01-15",
@@ -109,7 +110,7 @@ mod tests {
         }"#;
 
         let hit: CrashHit = serde_json::from_str(json).unwrap();
-        assert_eq!(hit.os_name, None);
+        assert_eq!(hit.platform, None);
     }
 
     #[test]
