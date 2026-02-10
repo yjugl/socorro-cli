@@ -91,6 +91,9 @@ EXAMPLES:
     # Find crashes on ARM64 architecture
     socorro-cli search --product Firefox --cpu-arch aarch64
 
+    # Find nightly crashes only
+    socorro-cli search --product Firefox --channel nightly
+
 SIGNATURE PATTERNS:
     Exact match:  --signature \"OOM | small\"
     Contains:     --signature \"~AudioDecoder\" (use ~ prefix)
@@ -103,6 +106,9 @@ PLATFORMS:
 
 CPU ARCHITECTURES:
     amd64, x86, aarch64, arm
+
+RELEASE CHANNELS:
+    release, beta, nightly, esr
 
 OUTPUT FIELDS:
     crash_id    - Full crash UUID (usable with 'socorro-cli crash')
@@ -167,6 +173,10 @@ enum Commands {
         #[arg(long)]
         cpu_arch: Option<String>,
 
+        /// Filter by release channel (release, beta, nightly, esr)
+        #[arg(long)]
+        channel: Option<String>,
+
         /// Search crashes from the last N days
         #[arg(long, default_value = "7")]
         days: u32,
@@ -210,7 +220,7 @@ fn main() -> Result<()> {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             socorro_cli::commands::crash::execute(&client, &crash_id, depth, full, all_threads, modules, cli.format)?;
         }
-        Commands::Search { signature, product, version, platform, cpu_arch, days, limit, facet, sort } => {
+        Commands::Search { signature, product, version, platform, cpu_arch, channel, days, limit, facet, sort } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             let params = socorro_cli::models::SearchParams {
                 signature,
@@ -218,6 +228,7 @@ fn main() -> Result<()> {
                 version,
                 platform,
                 cpu_arch,
+                release_channel: channel,
                 days,
                 limit,
                 facets: facet,

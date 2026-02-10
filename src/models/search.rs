@@ -37,6 +37,7 @@ pub struct SearchParams {
     pub version: Option<String>,
     pub platform: Option<String>,
     pub cpu_arch: Option<String>,
+    pub release_channel: Option<String>,
     pub days: u32,
     pub limit: usize,
     pub facets: Vec<String>,

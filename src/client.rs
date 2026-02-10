@@ -80,6 +80,10 @@ impl SocorroClient {
             query_params.push(("cpu_arch", arch));
         }
 
+        if let Some(channel) = params.release_channel {
+            query_params.push(("release_channel", channel));
+        }
+
         for facet in params.facets {
             query_params.push(("_facets", facet));
         }
