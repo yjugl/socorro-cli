@@ -65,6 +65,7 @@ OUTPUT FIELDS:
     reason      - Crash type (SIGSEGV, EXCEPTION_ACCESS_VIOLATION, etc.)
     moz_reason  - Mozilla assertion message if applicable
     product     - Product name and version (Firefox 120.0, Fenix 147.0.1, etc.)
+    build       - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
     stack       - Stack trace of the crashing thread";
 
 const SEARCH_ABOUT: &str = "\

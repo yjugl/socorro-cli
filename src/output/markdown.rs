@@ -58,6 +58,9 @@ pub fn format_crash(summary: &CrashSummary) -> String {
     };
 
     output.push_str(&format!("- **Product:** {} {}\n", summary.product, summary.version));
+    if let Some(build_id) = &summary.build_id {
+        output.push_str(&format!("- **Build ID:** {}\n", build_id));
+    }
     output.push_str(&format!("- **Platform:** {}{}\n\n", summary.platform, device_info));
 
     if !summary.all_threads.is_empty() {
@@ -155,6 +158,7 @@ mod tests {
             abort_message: None,
             product: "Fenix".to_string(),
             version: "147.0.1".to_string(),
+            build_id: Some("20240115103000".to_string()),
             platform: "Android 36".to_string(),
             android_version: Some("36".to_string()),
             android_model: Some("SM-S918B".to_string()),
