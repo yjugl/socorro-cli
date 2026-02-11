@@ -110,6 +110,17 @@ CPU ARCHITECTURES:
 RELEASE CHANNELS:
     release, beta, nightly, esr
 
+FACET / SORT FIELDS:
+    signature, product, version, platform, cpu_arch, release_channel,
+    platform_pretty_version, process_type, plugin_filename, dom_ipc_enabled,
+    adapter_vendor_id, adapter_device_id
+    Use -field for descending sort (e.g., --sort -date).
+
+FILTER LOGIC:
+    Multiple filters are combined with AND logic.
+    Example: --platform Windows --channel nightly returns only
+    crashes that are both Windows AND nightly.
+
 OUTPUT FIELDS:
     crash_id    - Full crash UUID (usable with 'socorro-cli crash')
     product     - Product name and version
