@@ -89,7 +89,7 @@ EXAMPLES:
     socorro-cli search --product Firefox --platform Windows --version 120.0
 
     # Find crashes on ARM64 architecture
-    socorro-cli search --product Firefox --cpu-arch aarch64
+    socorro-cli search --product Firefox --cpu-arch arm64
 
     # Find nightly crashes only
     socorro-cli search --product Firefox --channel nightly
@@ -105,7 +105,7 @@ PLATFORMS:
     Windows, Linux, Mac OS X, Android
 
 CPU ARCHITECTURES:
-    amd64, x86, aarch64, arm
+    amd64, x86, arm64, arm
 
 RELEASE CHANNELS:
     release, beta, nightly, esr
@@ -180,7 +180,7 @@ enum Commands {
         #[arg(long)]
         platform: Option<String>,
 
-        /// Filter by CPU architecture (amd64, x86, aarch64, arm)
+        /// Filter by CPU architecture (amd64, x86, arm64, arm)
         #[arg(long)]
         cpu_arch: Option<String>,
 
