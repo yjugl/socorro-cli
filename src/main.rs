@@ -66,7 +66,7 @@ OUTPUT FIELDS:
     moz_reason  - Mozilla assertion message if applicable
     product     - Product name and version (Firefox 120.0, Fenix 147.0.1, etc.)
     build       - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
-    channel     - Release channel (release, beta, nightly, esr)
+    channel     - Release channel (release, beta, nightly, esr, aurora, default)
     stack       - Stack trace of the crashing thread";
 
 const SEARCH_ABOUT: &str = "\
@@ -108,7 +108,11 @@ CPU ARCHITECTURES:
     amd64, x86, arm64, arm
 
 RELEASE CHANNELS:
-    release, beta, nightly, esr
+    release, beta, nightly, esr, aurora (Developer Edition), default
+    NOTE: Linux distro builds often report channel as \"default\" instead
+    of \"release\". To find all release-like crashes, run two searches:
+      socorro-cli search --channel release ...
+      socorro-cli search --channel default ...
 
 FACET / SORT FIELDS:
     signature, product, version, platform, cpu_arch, release_channel,
@@ -125,7 +129,7 @@ OUTPUT FIELDS:
     crash_id    - Full crash UUID (usable with 'socorro-cli crash')
     product     - Product name and version
     platform    - Operating system name
-    channel     - Release channel (release, beta, nightly, esr)
+    channel     - Release channel (release, beta, nightly, esr, aurora, default)
     build_id    - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
     signature   - Crash signature";
 
@@ -184,7 +188,7 @@ enum Commands {
         #[arg(long)]
         cpu_arch: Option<String>,
 
-        /// Filter by release channel (release, beta, nightly, esr)
+        /// Filter by release channel (release, beta, nightly, esr, aurora, default)
         #[arg(long)]
         channel: Option<String>,
 
