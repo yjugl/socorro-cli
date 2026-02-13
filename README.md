@@ -111,6 +111,37 @@ socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --format markdown
 socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --format json
 ```
 
+### Crash Pings Command
+
+Query Firefox crash pings — opt-out telemetry that represents the actual crash
+experience (~1.7M/day vs ~40K/day for opt-in Socorro reports):
+
+```bash
+# Top crash signatures from yesterday's pings
+socorro-cli crash-pings
+
+# Specify date
+socorro-cli crash-pings --date 2026-02-12
+
+# Filter by channel, OS, process type
+socorro-cli crash-pings --channel release --os Windows
+socorro-cli crash-pings --process main --version 147.0.3
+
+# Filter by signature (exact or contains with ~ prefix)
+socorro-cli crash-pings --signature "OOM | small"
+
+# Aggregate by a field instead of signature
+socorro-cli crash-pings --signature "OOM | small" --facet os
+socorro-cli crash-pings --facet process
+
+# Fetch symbolicated stack for a specific crash ping
+socorro-cli crash-pings --stack <crashid> --date 2026-02-12
+
+# Different output formats
+socorro-cli crash-pings --format json
+socorro-cli crash-pings --format markdown
+```
+
 ### Search Command
 
 Search and aggregate crashes with filters:
@@ -159,6 +190,18 @@ Formatted output for documentation and chat interfaces.
 - `--depth <N>`: Stack trace depth [default: 10]
 - `--full`: Output complete crash data without omissions (forces JSON format)
 - `--all-threads`: Show stacks from all threads (useful for diagnosing deadlocks)
+
+### Crash Pings Options
+- `--date <DATE>`: Date to query (YYYY-MM-DD) [default: yesterday UTC]
+- `--channel <CH>`: Filter by release channel (release, beta, nightly)
+- `--os <OS>`: Filter by OS (Windows, Linux, Mac, Android)
+- `--process <PROC>`: Filter by process type (main, content, gpu, rdd, utility, socket, gmplugin)
+- `--version <VER>`: Filter by product version
+- `--signature <SIG>`: Filter by crash signature (use ~ prefix for contains match)
+- `--arch <ARCH>`: Filter by CPU architecture
+- `--facet <FIELD>`: Aggregate by field [default: signature]
+- `--limit <N>`: Number of top entries to show [default: 10]
+- `--stack <ID>`: Fetch symbolicated stack for a specific crash ping
 
 ### Search Options
 - `--signature <SIG>`: Filter by crash signature (supports wildcards)

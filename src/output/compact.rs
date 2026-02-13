@@ -1,4 +1,6 @@
 use crate::models::{CrashSummary, CorrelationsSummary, SearchResponse, StackFrame};
+use crate::models::crash_pings::{CrashPingsSummary, CrashPingStackSummary};
+use crate::commands::crash_pings::format_frame_location;
 
 fn format_function(frame: &StackFrame) -> String {
     if let Some(func) = &frame.function {
@@ -389,6 +391,61 @@ pub fn format_correlations(summary: &CorrelationsSummary) -> String {
                 "({:06.2}% vs {:05.2}% overall) {}{}\n",
                 item.sig_pct, item.ref_pct, item.label, prior_str
             ));
+        }
+    }
+
+    output
+}
+
+pub fn format_crash_pings(summary: &CrashPingsSummary) -> String {
+    let mut output = String::new();
+
+    let filter_str = if let Some(ref sig) = summary.signature_filter {
+        format!(": \"{}\" ({} pings)", sig, summary.filtered_total)
+    } else {
+        format!(" ({} pings, sampled)", summary.total)
+    };
+    output.push_str(&format!("CRASH PINGS {}{}\n\n", summary.date, filter_str));
+
+    if summary.facet_name != "signature" || summary.signature_filter.is_some() {
+        output.push_str(&format!("{}:\n", summary.facet_name));
+    }
+
+    if summary.items.is_empty() {
+        output.push_str("  (no matching pings)\n");
+    } else {
+        for item in &summary.items {
+            output.push_str(&format!(
+                "  {} ({}, {:.2}%)\n",
+                item.label, item.count, item.percentage
+            ));
+        }
+    }
+
+    output
+}
+
+pub fn format_crash_ping_stack(summary: &CrashPingStackSummary) -> String {
+    let mut output = String::new();
+
+    output.push_str(&format!(
+        "CRASH PING {} ({})\n",
+        summary.crash_id, summary.date
+    ));
+
+    if summary.frames.is_empty() {
+        if summary.java_exception.is_some() {
+            output.push_str("\njava_exception:\n");
+            if let Some(ref exc) = summary.java_exception {
+                output.push_str(&format!("  {}\n", exc));
+            }
+        } else {
+            output.push_str("\nNo stack trace available.\n");
+        }
+    } else {
+        output.push_str("\nstack:\n");
+        for (i, frame) in summary.frames.iter().enumerate() {
+            output.push_str(&format!("  #{} {}\n", i, format_frame_location(frame)));
         }
     }
 

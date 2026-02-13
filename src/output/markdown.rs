@@ -1,4 +1,6 @@
 use crate::models::{CrashSummary, CorrelationsSummary, SearchResponse, StackFrame};
+use crate::models::crash_pings::{CrashPingsSummary, CrashPingStackSummary};
+use crate::commands::crash_pings::format_frame_location;
 
 fn format_function(frame: &StackFrame) -> String {
     if let Some(func) = &frame.function {
@@ -149,6 +151,72 @@ pub fn format_search(response: &SearchResponse) -> String {
             }
             output.push('\n');
         }
+    }
+
+    output
+}
+
+pub fn format_crash_pings(summary: &CrashPingsSummary) -> String {
+    let mut output = String::new();
+
+    output.push_str("# Crash Pings\n\n");
+    output.push_str(&format!("**Date:** {}\n\n", summary.date));
+
+    if let Some(ref sig) = summary.signature_filter {
+        output.push_str(&format!(
+            "**Signature:** `{}`\n\n**Matching pings:** {}\n\n",
+            sig, summary.filtered_total
+        ));
+    } else {
+        output.push_str(&format!(
+            "**Total pings:** {} (sampled)\n\n",
+            summary.total
+        ));
+    }
+
+    if summary.items.is_empty() {
+        output.push_str("No matching pings.\n");
+    } else {
+        let facet_label = &summary.facet_name;
+        output.push_str(&format!("## By {}\n\n", facet_label));
+        output.push_str(&format!("| {} | Count | % |\n", facet_label));
+        output.push_str("|---|------:|--:|\n");
+        for item in &summary.items {
+            output.push_str(&format!(
+                "| {} | {} | {:.2}% |\n",
+                item.label, item.count, item.percentage
+            ));
+        }
+    }
+
+    output
+}
+
+pub fn format_crash_ping_stack(summary: &CrashPingStackSummary) -> String {
+    let mut output = String::new();
+
+    output.push_str("# Crash Ping Stack\n\n");
+    output.push_str(&format!("**Crash ID:** `{}`\n\n", summary.crash_id));
+    output.push_str(&format!("**Date:** {}\n\n", summary.date));
+
+    if summary.frames.is_empty() {
+        if summary.java_exception.is_some() {
+            output.push_str("## Java Exception\n\n");
+            output.push_str("```json\n");
+            if let Some(ref exc) = summary.java_exception {
+                output.push_str(&serde_json::to_string_pretty(exc).unwrap_or_default());
+                output.push('\n');
+            }
+            output.push_str("```\n");
+        } else {
+            output.push_str("No stack trace available.\n");
+        }
+    } else {
+        output.push_str("## Stack Trace\n\n```\n");
+        for (i, frame) in summary.frames.iter().enumerate() {
+            output.push_str(&format!("#{} {}\n", i, format_frame_location(frame)));
+        }
+        output.push_str("```\n");
     }
 
     output

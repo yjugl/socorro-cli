@@ -24,6 +24,12 @@ EXAMPLES:
     # List top crash signatures by volume (like the Top Crashers web UI)
     socorro-cli search --facet signature
 
+    # Top crash signatures from yesterday's opt-out crash pings
+    socorro-cli crash-pings
+
+    # Crash pings filtered by channel and OS
+    socorro-cli crash-pings --channel release --os Windows
+
 API TOKEN:
     For higher rate limits, run 'socorro-cli auth login' to store a token.
     Create tokens at: https://crash-stats.mozilla.org/api/tokens/
@@ -169,6 +175,56 @@ OUTPUT FIELDS:
     build_id    - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
     signature   - Crash signature";
 
+const CRASH_PINGS_ABOUT: &str = "\
+Query Firefox crash pings from crash-pings.mozilla.org.
+
+Crash pings are opt-out telemetry (~1.7M/day), representing the actual crash
+experience of the Firefox user base. Unlike Socorro crash reports (opt-in,
+~40K/day), crash pings are not biased toward users who click 'submit'.
+
+Data is a daily sample (~5000 pings per OS/process-type for release; more for
+beta/nightly), available ~04:00 UTC for the previous day.
+
+Downloaded data is cached locally so repeated queries for the same date are
+instant.
+
+EXAMPLES:
+    # Top crash signatures from yesterday's pings
+    socorro-cli crash-pings
+
+    # Specify date
+    socorro-cli crash-pings --date 2026-02-12
+
+    # Filter by channel, OS, process type, version
+    socorro-cli crash-pings --channel release --os Windows
+    socorro-cli crash-pings --process main --version 147.0.3
+
+    # Filter by signature (exact or contains with ~ prefix)
+    socorro-cli crash-pings --signature \"OOM | small\"
+    socorro-cli crash-pings --signature \"~AudioDecoder\"
+
+    # Aggregate by a field instead of signature
+    socorro-cli crash-pings --signature \"OOM | small\" --facet os
+    socorro-cli crash-pings --facet process
+
+    # Fetch symbolicated stack for a specific crash ping
+    socorro-cli crash-pings --stack <crashid> --date 2026-02-12
+
+FACET FIELDS:
+    signature, channel, os, process, version, arch, osversion, build_id,
+    ipc_actor, reason, type
+
+CRASH PINGS VS CRASH REPORTS:
+    | Feature         | crash-pings (this)    | crash (Socorro)          |
+    |-----------------|-----------------------|--------------------------|
+    | Opt-in/out      | Opt-out (all users)   | Opt-in (user clicks)     |
+    | Volume          | ~1.7M/day             | ~40K/day                 |
+    | Bias            | Representative sample | Biased toward submitters |
+    | Detail          | Signature + metadata  | Full minidump + stack    |
+    | Stack traces    | Symbolicated stacks   | Full native stacks       |
+
+    Use crash-pings for volume/trend analysis; use crash for deep debugging.";
+
 const CORRELATIONS_ABOUT: &str = "\
 Show attributes that are statistically over-represented in crashes with a given
 signature compared to the overall crash population.
@@ -229,6 +285,50 @@ enum Commands {
         /// Include loaded modules in output
         #[arg(long)]
         modules: bool,
+    },
+
+    /// Query Firefox crash pings (opt-out telemetry, representative sample)
+    #[command(long_about = CRASH_PINGS_ABOUT)]
+    CrashPings {
+        /// Date to query (YYYY-MM-DD), defaults to yesterday (UTC)
+        #[arg(long)]
+        date: Option<String>,
+
+        /// Filter by release channel (release, beta, nightly)
+        #[arg(long)]
+        channel: Option<String>,
+
+        /// Filter by OS (Windows, Linux, Mac, Android)
+        #[arg(long)]
+        os: Option<String>,
+
+        /// Filter by process type (main, content, gpu, rdd, utility, socket, gmplugin)
+        #[arg(long)]
+        process: Option<String>,
+
+        /// Filter by product version (e.g., "147.0.3")
+        #[arg(long)]
+        version: Option<String>,
+
+        /// Filter by crash signature (use ~ prefix for contains match)
+        #[arg(long)]
+        signature: Option<String>,
+
+        /// Filter by CPU architecture (x86_64, aarch64, x86, arm)
+        #[arg(long)]
+        arch: Option<String>,
+
+        /// Aggregate by field instead of signature
+        #[arg(long, default_value = "signature")]
+        facet: String,
+
+        /// Number of top entries to show
+        #[arg(long, default_value = "10")]
+        limit: usize,
+
+        /// Fetch symbolicated stack for a specific crash ping ID
+        #[arg(long)]
+        stack: Option<String>,
     },
 
     /// Show over-represented attributes for a crash signature
@@ -316,6 +416,28 @@ fn main() -> Result<()> {
                 AuthAction::Logout => socorro_cli::commands::auth::logout()?,
                 AuthAction::Status => socorro_cli::commands::auth::status()?,
             }
+        }
+        Commands::CrashPings { date, channel, os, process, version, signature, arch, facet, limit, stack } => {
+            let date = date.unwrap_or_else(|| {
+                let yesterday = chrono::Utc::now() - chrono::Duration::days(1);
+                yesterday.format("%Y-%m-%d").to_string()
+            });
+            let filters = socorro_cli::models::crash_pings::CrashPingFilters {
+                channel,
+                os,
+                process,
+                version,
+                signature,
+                arch,
+            };
+            socorro_cli::commands::crash_pings::execute(
+                &date,
+                filters,
+                &facet,
+                limit,
+                stack.as_deref(),
+                cli.format,
+            )?;
         }
         Commands::Correlations { signature, channel } => {
             socorro_cli::commands::correlations::execute(&signature, &channel, cli.format)?;

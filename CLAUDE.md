@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-socorro-cli is a Rust CLI tool for querying Mozilla's Socorro crash reporting system. It's optimized for LLM coding agents with token-efficient output formats. The tool provides four main commands: `crash` (fetch individual crash details), `search` (search and aggregate crashes), `correlations` (show over-represented attributes for a signature), and `auth` (manage API token storage).
+socorro-cli is a Rust CLI tool for querying Mozilla's Socorro crash reporting system. It's optimized for LLM coding agents with token-efficient output formats. The tool provides five main commands: `crash` (fetch individual crash details), `search` (search and aggregate crashes), `correlations` (show over-represented attributes for a signature), `crash-pings` (query opt-out crash ping telemetry from crash-pings.mozilla.org), and `auth` (manage API token storage).
 
 ## Build & Development Commands
 
@@ -19,6 +19,7 @@ cargo build --release
 cargo run -- crash <crash-id>
 cargo run -- search --signature "SomeSignature"
 cargo run -- correlations --signature "OOM | small"
+cargo run -- crash-pings --channel release --os Windows
 
 # Install locally
 cargo install --path .
@@ -60,10 +61,16 @@ cargo clippy
   - **crash.rs**: Handles crash fetching and output formatting
   - **search.rs**: Handles crash search and aggregation
   - **correlations.rs**: Fetches correlation data from CDN (not Socorro API), computes signature hash, handles CDN HTTP requests
+  - **crash_pings.rs**: Fetches crash ping data from crash-pings.mozilla.org, client-side filtering/aggregation, stack trace fetching
+- **src/cache.rs**: Generic file cache module using OS cache directory (`dirs::cache_dir()`)
+  - `cache_dir()`: Returns/creates the cache directory
+  - `read_cached()`: Read cached data by key
+  - `write_cache()`: Write data to cache by key
 - **src/models/**: Data structures for Socorro API responses
   - **processed_crash.rs**: `ProcessedCrash`, `Thread`, `CrashSummary` - crash data models
   - **search.rs**: `SearchResponse`, `SearchParams` - search data models
   - **correlations.rs**: `CorrelationsTotals`, `CorrelationsResponse`, `CorrelationsSummary` - correlation data models
+  - **crash_pings.rs**: `CrashPingsResponse`, `CrashPingStackResponse`, `CrashPingsSummary` - crash ping data models (struct-of-arrays with string deduplication)
   - **common.rs**: Shared types like `StackFrame`
 - **src/output/**: Output formatters
   - **compact.rs**: Token-optimized plain text (default, LLM-friendly)
@@ -78,6 +85,7 @@ cargo clippy
    - For crash: extracts crash ID from URL if needed → `client.get_crash()` → converts `ProcessedCrash` to `CrashSummary` → formats output
    - For search: builds `SearchParams` → `client.search()` → formats `SearchResponse`
    - For correlations: builds reqwest client with gzip → fetches totals + per-signature data from CDN → converts `CorrelationsResponse` to `CorrelationsSummary` → formats output
+   - For crash-pings: builds reqwest client with gzip → fetches full day's ping data from crash-pings.mozilla.org (cached locally) → client-side filtering/aggregation → formats `CrashPingsSummary`; or fetches individual stack trace → formats `CrashPingStackSummary`
 4. Output formatter generates final text based on selected format
 
 ### Key Design Decisions
@@ -127,12 +135,15 @@ Run tests with:
 cargo test
 ```
 
-The test suite (64 tests) covers:
+The test suite (96 tests) covers:
 - **Crash ID extraction**: Bare IDs, full URLs, URLs with trailing slashes
 - **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode
 - **Search models**: SearchResponse/CrashHit deserialization, facets parsing
 - **Correlations models**: Deserialization, `to_summary()` percentage calculations, `format_item_map()` for item display
-- **Output formatters**: Compact and Markdown formatters for crash, search, and correlations output
+- **Crash pings models**: IndexedStrings/NullableIndexedStrings deserialization, accessor methods, filter matching (channel, OS, process, version, signature exact/contains, arch, combined), facet value resolution, stack response deserialization
+- **Crash pings command**: Aggregation by signature/OS, filtering, limit, percentage calculations, frame formatting
+- **Cache module**: Cache directory creation, read/write roundtrip, empty cache handling
+- **Output formatters**: Compact and Markdown formatters for crash, search, correlations, and crash pings output
 - **Client validation**: Crash ID format validation (rejects invalid characters, potential injection attempts)
 - **Auth token file**: Reading from `SOCORRO_API_TOKEN_PATH`, whitespace handling, missing file handling
 

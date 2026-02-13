@@ -1,5 +1,6 @@
 pub mod common;
 pub mod correlations;
+pub mod crash_pings;
 pub mod processed_crash;
 pub mod search;
 
