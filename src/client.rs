@@ -92,6 +92,10 @@ impl SocorroClient {
             query_params.push(("_facets", facet));
         }
 
+        if let Some(size) = params.facets_size {
+            query_params.push(("_facets_size", size.to_string()));
+        }
+
         let mut request = self.client.get(&url);
         for (key, value) in query_params {
             request = request.query(&[(key, value)]);

@@ -21,6 +21,9 @@ EXAMPLES:
     # Search Firefox crashes from last 30 days, aggregate by version
     socorro-cli search --product Firefox --days 30 --facet version
 
+    # List top crash signatures by volume (like the Top Crashers web UI)
+    socorro-cli search --facet signature
+
 API TOKEN:
     For higher rate limits, run 'socorro-cli auth login' to store a token.
     Create tokens at: https://crash-stats.mozilla.org/api/tokens/
@@ -100,6 +103,24 @@ EXAMPLES:
     # Filter to a specific Windows build
     socorro-cli search --signature \"OOM | small\" --platform-version \"~10.0.26100\"
 
+TOP CRASHERS:
+    To list the top crash signatures by volume (like the Socorro web UI's
+    Top Crashers page), use --facet signature:
+
+    # Top 50 Firefox crashers in the last 7 days (default facets size)
+    socorro-cli search --facet signature
+
+    # Top 20 nightly crashers in the last 14 days
+    socorro-cli search --channel nightly --days 14 --facet signature --facets-size 20
+
+    # Top 100 Fenix crashers on Android
+    socorro-cli search --product Fenix --facet signature --facets-size 100
+
+    When --facet is used, individual crash rows are hidden by default
+    (only aggregated counts are shown). Use --limit 10 to also show
+    individual crashes alongside the aggregations.
+    --facets-size controls how many top signatures are returned (default: 50).
+
 SIGNATURE PATTERNS:
     Exact match:  --signature \"OOM | small\"
     Contains:     --signature \"~AudioDecoder\" (use ~ prefix)
@@ -178,6 +199,7 @@ LIMITATIONS:
     - Channels: release, beta, nightly, esr";
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Manage API token stored in system keychain
     #[command(after_help = "Run 'socorro-cli auth status' to check if a token is stored.")]
@@ -256,13 +278,17 @@ enum Commands {
         #[arg(long, default_value = "7")]
         days: u32,
 
-        /// Maximum number of results to return
-        #[arg(long, default_value = "10")]
-        limit: usize,
+        /// Maximum number of individual crash results to return (default: 10, or 0 when --facet is used)
+        #[arg(long)]
+        limit: Option<usize>,
 
         /// Aggregate results by field (can be repeated: --facet version --facet platform)
         #[arg(long)]
         facet: Vec<String>,
+
+        /// Number of facet buckets to return (e.g., top N signatures)
+        #[arg(long)]
+        facets_size: Option<usize>,
 
         /// Sort field (prefix with - for descending, e.g., -date)
         #[arg(long, default_value = "-date")]
@@ -298,8 +324,9 @@ fn main() -> Result<()> {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             socorro_cli::commands::crash::execute(&client, &crash_id, depth, full, all_threads, modules, cli.format)?;
         }
-        Commands::Search { signature, product, version, platform, cpu_arch, channel, platform_version, days, limit, facet, sort } => {
+        Commands::Search { signature, product, version, platform, cpu_arch, channel, platform_version, days, limit, facet, facets_size, sort } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
+            let limit = limit.unwrap_or(if facet.is_empty() { 10 } else { 0 });
             let params = socorro_cli::models::SearchParams {
                 signature,
                 product,
@@ -311,6 +338,7 @@ fn main() -> Result<()> {
                 days,
                 limit,
                 facets: facet,
+                facets_size,
                 sort,
             };
             socorro_cli::commands::search::execute(&client, params, cli.format)?;

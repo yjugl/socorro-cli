@@ -97,6 +97,8 @@ With `--all-threads`, it formats all threads (marking the crashing one), useful 
 
 **Compact Format**: Default output format is designed to minimize tokens while preserving essential crash information. Uses abbreviations (sig, moz_reason) and omits field labels when clear from context.
 
+**Facet-aware `--limit` default**: When `--facet` is used, `--limit` defaults to 0 (only aggregations shown). Without `--facet`, it defaults to 10. Users can override with `--limit N` to show individual crash rows alongside aggregations. `--facets-size` controls how many buckets each facet returns (e.g., top N signatures).
+
 **Error Handling**: Uses `thiserror` for structured errors. Specific handling for:
 - 404 → `NotFound` error with crash ID
 - 429 → `RateLimited` error suggesting API token usage

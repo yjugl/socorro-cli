@@ -166,8 +166,9 @@ Formatted output for documentation and chat interfaces.
 - `--version <VER>`: Filter by version
 - `--platform <PLAT>`: Filter by platform (Windows, Linux, Mac, Android)
 - `--days <N>`: Search crashes from last N days [default: 7]
-- `--limit <N>`: Maximum results to return [default: 10]
+- `--limit <N>`: Maximum individual crash results to return [default: 10, or 0 when --facet is used]
 - `--facet <FIELD>`: Aggregate by field (can be repeated)
+- `--facets-size <N>`: Number of facet buckets to return (e.g., top N signatures)
 - `--sort <FIELD>`: Sort field [default: -date]
 
 ## Examples
@@ -247,14 +248,11 @@ socorro-cli search --signature "AudioDecoderInputTrack" --product Fenix --days 3
 # 5b7622f7 | Fenix 147.0.1 | Unknown | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
 # ...
 
-# Aggregate crashes by platform and version
-socorro-cli search --product Firefox --days 7 --facet platform --facet version --limit 5
+# Aggregate crashes by platform and version (only aggregations shown)
+socorro-cli search --product Firefox --days 7 --facet platform --facet version
 
 # Output:
 # FOUND 69146 crashes
-#
-# 6df5bc35 | Firefox 143.0 | Unknown | OOM | small
-# ...
 #
 # AGGREGATIONS:
 #
@@ -268,11 +266,14 @@ socorro-cli search --product Firefox --days 7 --facet platform --facet version -
 #   Linux (12000)
 #   ...
 
+# Show 5 individual crashes alongside aggregations
+socorro-cli search --product Firefox --days 7 --facet platform --facet version --limit 5
+
 # Find crashes on specific platform and version
 socorro-cli search --product Firefox --platform Windows --version 147.0.1 --days 14
 
-# Top crashes by signature
-socorro-cli search --product Firefox --days 7 --facet signature --limit 20
+# Top 20 crash signatures by volume
+socorro-cli search --product Firefox --days 7 --facet signature --facets-size 20
 
 # Recent Android crashes
 socorro-cli search --product Fenix --platform Android --days 3 --limit 20

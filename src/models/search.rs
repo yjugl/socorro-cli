@@ -44,6 +44,7 @@ pub struct SearchParams {
     pub days: u32,
     pub limit: usize,
     pub facets: Vec<String>,
+    pub facets_size: Option<usize>,
     pub sort: String,
 }
 
