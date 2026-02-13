@@ -94,6 +94,12 @@ EXAMPLES:
     # Find nightly crashes only
     socorro-cli search --product Firefox --channel nightly
 
+    # Break down crashes by OS version
+    socorro-cli search --signature \"OOM | small\" --facet platform_version
+
+    # Filter to a specific Windows build
+    socorro-cli search --signature \"OOM | small\" --platform-version \"~10.0.26100\"
+
 SIGNATURE PATTERNS:
     Exact match:  --signature \"OOM | small\"
     Contains:     --signature \"~AudioDecoder\" (use ~ prefix)
@@ -108,16 +114,25 @@ CPU ARCHITECTURES:
     amd64, x86, arm64, arm
 
 RELEASE CHANNELS:
-    release, beta, nightly, esr, aurora (Developer Edition), default
+    release, beta, nightly, esr, aurora, default
+    NOTE: \"aurora\" is the channel used by Firefox Developer Edition.
     NOTE: Linux distro builds often report channel as \"default\" instead
     of \"release\". To find all release-like crashes, run two searches:
       socorro-cli search --channel release ...
       socorro-cli search --channel default ...
 
+PLATFORM VERSIONS:
+    Values are OS version strings from the crash report, e.g.:
+      Windows: \"10.0.19045\", \"10.0.26100\"
+      macOS:   \"15.7.3 24G419\", \"10.13.6 17G14042\"
+      Android: \"28\", \"36\" (API levels)
+    Use --facet platform_version to see which OS builds are affected.
+    Use --platform-version \"~10.0.26100\" to filter (~ prefix for contains match).
+
 FACET / SORT FIELDS:
     signature, product, version, platform, cpu_arch, release_channel,
-    platform_pretty_version, process_type, plugin_filename, dom_ipc_enabled,
-    adapter_vendor_id, adapter_device_id
+    platform_version, platform_pretty_version, process_type, plugin_filename,
+    dom_ipc_enabled, adapter_vendor_id, adapter_device_id
     Use -field for descending sort (e.g., --sort -date).
 
 FILTER LOGIC:
@@ -128,7 +143,7 @@ FILTER LOGIC:
 OUTPUT FIELDS:
     crash_id    - Full crash UUID (usable with 'socorro-cli crash')
     product     - Product name and version
-    platform    - Operating system name
+    platform    - Operating system name and version (e.g., Windows NT 10.0.19045)
     channel     - Release channel (release, beta, nightly, esr, aurora, default)
     build_id    - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
     signature   - Crash signature";
@@ -192,6 +207,10 @@ enum Commands {
         #[arg(long)]
         channel: Option<String>,
 
+        /// Filter by OS version string (e.g., "10.0.19045", "10.0.26100")
+        #[arg(long)]
+        platform_version: Option<String>,
+
         /// Search crashes from the last N days
         #[arg(long, default_value = "7")]
         days: u32,
@@ -235,7 +254,7 @@ fn main() -> Result<()> {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             socorro_cli::commands::crash::execute(&client, &crash_id, depth, full, all_threads, modules, cli.format)?;
         }
-        Commands::Search { signature, product, version, platform, cpu_arch, channel, days, limit, facet, sort } => {
+        Commands::Search { signature, product, version, platform, cpu_arch, channel, platform_version, days, limit, facet, sort } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             let params = socorro_cli::models::SearchParams {
                 signature,
@@ -244,6 +263,7 @@ fn main() -> Result<()> {
                 platform,
                 cpu_arch,
                 release_channel: channel,
+                platform_version,
                 days,
                 limit,
                 facets: facet,

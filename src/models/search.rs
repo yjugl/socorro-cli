@@ -23,6 +23,8 @@ pub struct CrashHit {
     pub build_id: Option<String>,
     #[serde(default)]
     pub release_channel: Option<String>,
+    #[serde(default)]
+    pub platform_version: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -38,6 +40,7 @@ pub struct SearchParams {
     pub platform: Option<String>,
     pub cpu_arch: Option<String>,
     pub release_channel: Option<String>,
+    pub platform_version: Option<String>,
     pub days: u32,
     pub limit: usize,
     pub facets: Vec<String>,

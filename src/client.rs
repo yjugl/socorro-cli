@@ -57,7 +57,7 @@ impl SocorroClient {
             ("_sort", params.sort),
         ];
 
-        for col in ["uuid", "date", "signature", "product", "version", "platform", "build_id", "release_channel"] {
+        for col in ["uuid", "date", "signature", "product", "version", "platform", "build_id", "release_channel", "platform_version"] {
             query_params.push(("_columns", col.to_string()));
         }
 
@@ -82,6 +82,10 @@ impl SocorroClient {
 
         if let Some(channel) = params.release_channel {
             query_params.push(("release_channel", channel));
+        }
+
+        if let Some(platform_version) = params.platform_version {
+            query_params.push(("platform_version", platform_version));
         }
 
         for facet in params.facets {

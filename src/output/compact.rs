@@ -221,6 +221,7 @@ mod tests {
                     platform: Some("Windows".to_string()),
                     build_id: Some("20240115103000".to_string()),
                     release_channel: Some("release".to_string()),
+                    platform_version: Some("10.0.19045".to_string()),
                 },
             ],
             facets: HashMap::new(),
@@ -230,7 +231,7 @@ mod tests {
         assert!(output.contains("FOUND 42 crashes"));
         assert!(output.contains("247653e8"));
         assert!(output.contains("Firefox 120.0"));
-        assert!(output.contains("Windows"));
+        assert!(output.contains("Windows 10.0.19045"));
         assert!(output.contains("mozilla::SomeFunction"));
     }
 
@@ -300,7 +301,12 @@ pub fn format_search(response: &SearchResponse) -> String {
     output.push_str(&format!("FOUND {} crashes\n\n", response.total));
 
     for hit in &response.hits {
-        let platform = hit.platform.as_deref().unwrap_or("?");
+        let platform = match (&hit.platform, &hit.platform_version) {
+            (Some(p), Some(v)) => format!("{} {}", p, v),
+            (Some(p), None) => p.clone(),
+            (None, Some(v)) => v.clone(),
+            (None, None) => "?".to_string(),
+        };
         let channel = hit.release_channel.as_deref().unwrap_or("?");
         let build = hit.build_id.as_deref().unwrap_or("?");
         output.push_str(&format!("{} | {} {} | {} | {} | {} | {}\n",
