@@ -1,4 +1,4 @@
-use crate::models::{CrashSummary, SearchResponse, StackFrame};
+use crate::models::{CrashSummary, CorrelationsSummary, SearchResponse, StackFrame};
 
 fn format_function(frame: &StackFrame) -> String {
     if let Some(func) = &frame.function {
@@ -154,6 +154,41 @@ pub fn format_search(response: &SearchResponse) -> String {
     output
 }
 
+pub fn format_correlations(summary: &CorrelationsSummary) -> String {
+    let mut output = String::new();
+
+    output.push_str("# Correlations\n\n");
+    output.push_str(&format!("**Signature:** `{}`\n\n", summary.signature));
+    output.push_str(&format!(
+        "- **Channel:** {}\n- **Data date:** {}\n- **Signature count:** {}\n- **Reference count:** {}\n\n",
+        summary.channel, summary.date, summary.sig_count as u64, summary.ref_count
+    ));
+
+    if summary.items.is_empty() {
+        output.push_str("No correlations found.\n");
+    } else {
+        output.push_str("| Sig % | Ref % | Attribute | Prior |\n");
+        output.push_str("|------:|------:|-----------|-------|\n");
+
+        for item in &summary.items {
+            let prior_str = if let Some(prior) = &item.prior {
+                format!(
+                    "{:.2}% vs {:.2}% if {}",
+                    prior.sig_pct, prior.ref_pct, prior.label
+                )
+            } else {
+                String::new()
+            };
+            output.push_str(&format!(
+                "| {:.2}% | {:.2}% | {} | {} |\n",
+                item.sig_pct, item.ref_pct, item.label, prior_str
+            ));
+        }
+    }
+
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,5 +331,66 @@ mod tests {
         assert!(output.contains("## Aggregations"));
         assert!(output.contains("### version"));
         assert!(output.contains("- **120.0**: 50 crashes"));
+    }
+
+    use crate::models::{CorrelationsSummary, CorrelationItem, CorrelationItemPrior};
+
+    #[test]
+    fn test_format_correlations_markdown_header() {
+        let summary = CorrelationsSummary {
+            signature: "TestSig".to_string(),
+            channel: "release".to_string(),
+            date: "2026-02-13".to_string(),
+            sig_count: 220.0,
+            ref_count: 79268,
+            items: vec![CorrelationItem {
+                label: "Module \"cscapi.dll\" = true".to_string(),
+                sig_pct: 100.0,
+                ref_pct: 24.51,
+                prior: None,
+            }],
+        };
+        let output = format_correlations(&summary);
+        assert!(output.contains("# Correlations"));
+        assert!(output.contains("**Signature:** `TestSig`"));
+        assert!(output.contains("- **Channel:** release"));
+        assert!(output.contains("| Sig % | Ref % | Attribute | Prior |"));
+    }
+
+    #[test]
+    fn test_format_correlations_markdown_with_prior() {
+        let summary = CorrelationsSummary {
+            signature: "TestSig".to_string(),
+            channel: "release".to_string(),
+            date: "2026-02-13".to_string(),
+            sig_count: 220.0,
+            ref_count: 79268,
+            items: vec![CorrelationItem {
+                label: "startup_crash = null".to_string(),
+                sig_pct: 29.55,
+                ref_pct: 1.16,
+                prior: Some(CorrelationItemPrior {
+                    label: "process_type = parent".to_string(),
+                    sig_pct: 50.91,
+                    ref_pct: 4.58,
+                }),
+            }],
+        };
+        let output = format_correlations(&summary);
+        assert!(output.contains("50.91% vs 4.58% if process_type = parent"));
+    }
+
+    #[test]
+    fn test_format_correlations_markdown_empty() {
+        let summary = CorrelationsSummary {
+            signature: "EmptySig".to_string(),
+            channel: "release".to_string(),
+            date: "2026-02-13".to_string(),
+            sig_count: 0.0,
+            ref_count: 79268,
+            items: vec![],
+        };
+        let output = format_correlations(&summary);
+        assert!(output.contains("No correlations found."));
     }
 }

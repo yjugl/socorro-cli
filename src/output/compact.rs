@@ -1,4 +1,4 @@
-use crate::models::{CrashSummary, SearchResponse, StackFrame};
+use crate::models::{CrashSummary, CorrelationsSummary, SearchResponse, StackFrame};
 
 fn format_function(frame: &StackFrame) -> String {
     if let Some(func) = &frame.function {
@@ -293,6 +293,106 @@ mod tests {
         };
         assert_eq!(format_function(&frame), "???");
     }
+
+    use crate::models::{CorrelationsSummary, CorrelationItem, CorrelationItemPrior};
+
+    fn sample_correlations_summary() -> CorrelationsSummary {
+        CorrelationsSummary {
+            signature: "TestSig".to_string(),
+            channel: "release".to_string(),
+            date: "2026-02-13".to_string(),
+            sig_count: 220.0,
+            ref_count: 79268,
+            items: vec![
+                CorrelationItem {
+                    label: "Module \"cscapi.dll\" = true".to_string(),
+                    sig_pct: 100.0,
+                    ref_pct: 24.51,
+                    prior: None,
+                },
+                CorrelationItem {
+                    label: "startup_crash = null".to_string(),
+                    sig_pct: 29.55,
+                    ref_pct: 1.16,
+                    prior: Some(CorrelationItemPrior {
+                        label: "process_type = parent".to_string(),
+                        sig_pct: 50.91,
+                        ref_pct: 4.58,
+                    }),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_format_correlations_header() {
+        let summary = sample_correlations_summary();
+        let output = format_correlations(&summary);
+        assert!(output.contains("CORRELATIONS for \"TestSig\" (release, data from 2026-02-13)"));
+        assert!(output.contains("sig_count: 220, ref_count: 79268"));
+    }
+
+    #[test]
+    fn test_format_correlations_items() {
+        let summary = sample_correlations_summary();
+        let output = format_correlations(&summary);
+        assert!(output.contains("(100.00% vs 24.51% overall) Module \"cscapi.dll\" = true"));
+    }
+
+    #[test]
+    fn test_format_correlations_with_prior() {
+        let summary = sample_correlations_summary();
+        let output = format_correlations(&summary);
+        assert!(output.contains("(029.55% vs 01.16% overall) startup_crash = null [50.91% vs 04.58% if process_type = parent]"));
+    }
+
+    #[test]
+    fn test_format_correlations_empty() {
+        let summary = CorrelationsSummary {
+            signature: "EmptySig".to_string(),
+            channel: "release".to_string(),
+            date: "2026-02-13".to_string(),
+            sig_count: 0.0,
+            ref_count: 79268,
+            items: vec![],
+        };
+        let output = format_correlations(&summary);
+        assert!(output.contains("No correlations found."));
+    }
+}
+
+pub fn format_correlations(summary: &CorrelationsSummary) -> String {
+    let mut output = String::new();
+
+    output.push_str(&format!(
+        "CORRELATIONS for \"{}\" ({}, data from {})\n",
+        summary.signature, summary.channel, summary.date
+    ));
+    output.push_str(&format!(
+        "sig_count: {}, ref_count: {}\n\n",
+        summary.sig_count as u64, summary.ref_count
+    ));
+
+    if summary.items.is_empty() {
+        output.push_str("No correlations found.\n");
+    } else {
+        for item in &summary.items {
+            let prior_str = if let Some(prior) = &item.prior {
+                format!(
+                    " [{:05.2}% vs {:05.2}% if {}]",
+                    prior.sig_pct, prior.ref_pct, prior.label
+                )
+            } else {
+                String::new()
+            };
+            output.push_str(&format!(
+                "({:06.2}% vs {:05.2}% overall) {}{}\n",
+                item.sig_pct, item.ref_pct, item.label, prior_str
+            ));
+        }
+    }
+
+    output
 }
 
 pub fn format_search(response: &SearchResponse) -> String {

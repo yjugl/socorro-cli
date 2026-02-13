@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-socorro-cli is a Rust CLI tool for querying Mozilla's Socorro crash reporting system. It's optimized for LLM coding agents with token-efficient output formats. The tool provides three main commands: `crash` (fetch individual crash details), `search` (search and aggregate crashes), and `auth` (manage API token storage).
+socorro-cli is a Rust CLI tool for querying Mozilla's Socorro crash reporting system. It's optimized for LLM coding agents with token-efficient output formats. The tool provides four main commands: `crash` (fetch individual crash details), `search` (search and aggregate crashes), `correlations` (show over-represented attributes for a signature), and `auth` (manage API token storage).
 
 ## Build & Development Commands
 
@@ -18,6 +18,7 @@ cargo build --release
 # Run locally without installing
 cargo run -- crash <crash-id>
 cargo run -- search --signature "SomeSignature"
+cargo run -- correlations --signature "OOM | small"
 
 # Install locally
 cargo install --path .
@@ -58,9 +59,11 @@ cargo clippy
   - **auth.rs**: Handles `auth login/logout/status` subcommands
   - **crash.rs**: Handles crash fetching and output formatting
   - **search.rs**: Handles crash search and aggregation
+  - **correlations.rs**: Fetches correlation data from CDN (not Socorro API), computes signature hash, handles CDN HTTP requests
 - **src/models/**: Data structures for Socorro API responses
   - **processed_crash.rs**: `ProcessedCrash`, `Thread`, `CrashSummary` - crash data models
   - **search.rs**: `SearchResponse`, `SearchParams` - search data models
+  - **correlations.rs**: `CorrelationsTotals`, `CorrelationsResponse`, `CorrelationsSummary` - correlation data models
   - **common.rs**: Shared types like `StackFrame`
 - **src/output/**: Output formatters
   - **compact.rs**: Token-optimized plain text (default, LLM-friendly)
@@ -74,6 +77,7 @@ cargo clippy
 3. Command module:
    - For crash: extracts crash ID from URL if needed → `client.get_crash()` → converts `ProcessedCrash` to `CrashSummary` → formats output
    - For search: builds `SearchParams` → `client.search()` → formats `SearchResponse`
+   - For correlations: builds reqwest client with gzip → fetches totals + per-signature data from CDN → converts `CorrelationsResponse` to `CorrelationsSummary` → formats output
 4. Output formatter generates final text based on selected format
 
 ### Key Design Decisions
@@ -121,11 +125,12 @@ Run tests with:
 cargo test
 ```
 
-The test suite (45 tests) covers:
+The test suite (64 tests) covers:
 - **Crash ID extraction**: Bare IDs, full URLs, URLs with trailing slashes
 - **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode
 - **Search models**: SearchResponse/CrashHit deserialization, facets parsing
-- **Output formatters**: Compact and Markdown formatters for crash and search output
+- **Correlations models**: Deserialization, `to_summary()` percentage calculations, `format_item_map()` for item display
+- **Output formatters**: Compact and Markdown formatters for crash, search, and correlations output
 - **Client validation**: Crash ID format validation (rejects invalid characters, potential injection attempts)
 - **Auth token file**: Reading from `SOCORRO_API_TOKEN_PATH`, whitespace handling, missing file handling
 

@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use socorro_cli::{Result, SocorroClient, OutputFormat};
+use socorro_cli::{OutputFormat, Result, SocorroClient};
 
 const LONG_ABOUT: &str = "\
 Query Mozilla's Socorro crash reporting system (https://crash-stats.mozilla.org).
@@ -148,6 +148,35 @@ OUTPUT FIELDS:
     build_id    - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
     signature   - Crash signature";
 
+const CORRELATIONS_ABOUT: &str = "\
+Show attributes that are statistically over-represented in crashes with a given
+signature compared to the overall crash population.
+
+Correlation data is pre-computed daily for the top ~200 signatures per channel
+and published to a CDN. Signatures outside the top ~200 will return a 'not found'
+error. No API token is needed.
+
+EXAMPLES:
+    # Show correlations for a signature on the release channel (default)
+    socorro-cli correlations --signature \"UiaNode::ProviderInfo::~ProviderInfo\"
+
+    # Show correlations on the nightly channel
+    socorro-cli correlations --signature \"OOM | small\" --channel nightly
+
+    # Get raw JSON data
+    socorro-cli correlations --signature \"OOM | small\" --format json
+
+OUTPUT FIELDS:
+    sig_%       - Percentage of crashes with this signature that have this attribute
+    ref_%       - Percentage of all crashes on the channel that have this attribute
+    attribute   - The over-represented attribute (module, OS version, GPU, etc.)
+    prior       - Conditional: percentages when another attribute is also present
+
+LIMITATIONS:
+    - Only available for the top ~200 signatures per channel
+    - Data is refreshed daily; may be up to 24 hours stale
+    - Channels: release, beta, nightly, esr";
+
 #[derive(Subcommand)]
 enum Commands {
     /// Manage API token stored in system keychain
@@ -178,6 +207,18 @@ enum Commands {
         /// Include loaded modules in output
         #[arg(long)]
         modules: bool,
+    },
+
+    /// Show over-represented attributes for a crash signature
+    #[command(long_about = CORRELATIONS_ABOUT)]
+    Correlations {
+        /// Crash signature (exact match)
+        #[arg(long)]
+        signature: String,
+
+        /// Release channel (release, beta, nightly, esr)
+        #[arg(long, default_value = "release")]
+        channel: String,
     },
 
     /// Search and aggregate crashes
@@ -249,6 +290,9 @@ fn main() -> Result<()> {
                 AuthAction::Logout => socorro_cli::commands::auth::logout()?,
                 AuthAction::Status => socorro_cli::commands::auth::status()?,
             }
+        }
+        Commands::Correlations { signature, channel } => {
+            socorro_cli::commands::correlations::execute(&signature, &channel, cli.format)?;
         }
         Commands::Crash { crash_id, depth, full, all_threads, modules } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
