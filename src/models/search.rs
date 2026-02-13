@@ -41,6 +41,7 @@ pub struct SearchParams {
     pub cpu_arch: Option<String>,
     pub release_channel: Option<String>,
     pub platform_version: Option<String>,
+    pub process_type: Option<String>,
     pub days: u32,
     pub limit: usize,
     pub facets: Vec<String>,

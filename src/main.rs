@@ -103,6 +103,12 @@ EXAMPLES:
     # Find nightly crashes only
     socorro-cli search --product Firefox --channel nightly
 
+    # Find content process crashes
+    socorro-cli search --signature \"OOM | small\" --process-type content
+
+    # Break down a signature by process type
+    socorro-cli search --signature \"OOM | small\" --facet process_type
+
     # Break down crashes by OS version
     socorro-cli search --signature \"OOM | small\" --facet platform_version
 
@@ -147,6 +153,11 @@ RELEASE CHANNELS:
     of \"release\". To find all release-like crashes, run two searches:
       socorro-cli search --channel release ...
       socorro-cli search --channel default ...
+
+PROCESS TYPES:
+    parent, content, gpu, rdd, utility, socket, gmplugin, plugin
+    NOTE: \"parent\" is the main/browser process. In crash pings, this is
+    called \"main\" instead.
 
 PLATFORM VERSIONS:
     Values are OS version strings from the crash report, e.g.:
@@ -374,6 +385,10 @@ enum Commands {
         #[arg(long)]
         platform_version: Option<String>,
 
+        /// Filter by process type (parent, content, gpu, rdd, utility, socket, gmplugin, plugin)
+        #[arg(long)]
+        process_type: Option<String>,
+
         /// Search crashes from the last N days
         #[arg(long, default_value = "7")]
         days: u32,
@@ -446,7 +461,7 @@ fn main() -> Result<()> {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             socorro_cli::commands::crash::execute(&client, &crash_id, depth, full, all_threads, modules, cli.format)?;
         }
-        Commands::Search { signature, product, version, platform, cpu_arch, channel, platform_version, days, limit, facet, facets_size, sort } => {
+        Commands::Search { signature, product, version, platform, cpu_arch, channel, platform_version, process_type, days, limit, facet, facets_size, sort } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             let limit = limit.unwrap_or(if facet.is_empty() { 10 } else { 0 });
             let params = socorro_cli::models::SearchParams {
@@ -457,6 +472,7 @@ fn main() -> Result<()> {
                 cpu_arch,
                 release_channel: channel,
                 platform_version,
+                process_type,
                 days,
                 limit,
                 facets: facet,

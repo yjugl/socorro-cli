@@ -88,6 +88,10 @@ impl SocorroClient {
             query_params.push(("platform_version", platform_version));
         }
 
+        if let Some(process_type) = params.process_type {
+            query_params.push(("process_type", process_type));
+        }
+
         for facet in params.facets {
             query_params.push(("_facets", facet));
         }
