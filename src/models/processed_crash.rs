@@ -1,5 +1,5 @@
-use super::StackFrame;
 use serde::{Deserialize, Serialize};
+use super::{StackFrame, common::deserialize_string_or_number};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProcessedCrash {
@@ -12,6 +12,10 @@ pub struct ProcessedCrash {
     pub version: Option<String>,
     #[serde(default)]
     pub os_name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_string_or_number")]
+    pub build: Option<String>,
+    #[serde(default)]
+    pub release_channel: Option<String>,
     #[serde(default)]
     pub os_version: Option<String>,
 
@@ -69,6 +73,8 @@ pub struct CrashSummary {
 
     pub product: String,
     pub version: String,
+    pub build_id: Option<String>,
+    pub release_channel: Option<String>,
     pub platform: String,
 
     pub android_version: Option<String>,
@@ -149,14 +155,10 @@ impl ProcessedCrash {
             address: crash_info.and_then(|ci| ci.address.clone()),
             moz_crash_reason: self.moz_crash_reason.clone(),
             abort_message: self.abort_message.clone(),
-            product: self
-                .product
-                .clone()
-                .unwrap_or_else(|| "Unknown".to_string()),
-            version: self
-                .version
-                .clone()
-                .unwrap_or_else(|| "Unknown".to_string()),
+            product: self.product.clone().unwrap_or_else(|| "Unknown".to_string()),
+            version: self.version.clone().unwrap_or_else(|| "Unknown".to_string()),
+            build_id: self.build.clone(),
+            release_channel: self.release_channel.clone(),
             platform: format!(
                 "{}{}",
                 self.os_name.as_deref().unwrap_or("Unknown"),
@@ -171,5 +173,149 @@ impl ProcessedCrash {
             frames,
             all_threads: thread_summaries,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_crash_json() -> &'static str {
+        r#"{
+            "uuid": "247653e8-7a18-4836-97d1-42a720260120",
+            "signature": "mozilla::AudioDecoderInputTrack::EnsureTimeStretcher",
+            "product": "Fenix",
+            "version": "147.0.1",
+            "os_name": "Android",
+            "os_version": "36",
+            "crashing_thread": 1,
+            "moz_crash_reason": "MOZ_RELEASE_ASSERT(mTimeStretcher->Init())",
+            "crash_info": {
+                "type": "SIGSEGV",
+                "address": "0x0",
+                "crashing_thread": 1
+            },
+            "threads": [
+                {
+                    "thread": 0,
+                    "thread_name": "MainThread",
+                    "frames": [
+                        {"frame": 0, "function": "main", "file": "main.cpp", "line": 10}
+                    ]
+                },
+                {
+                    "thread": 1,
+                    "thread_name": "GraphRunner",
+                    "frames": [
+                        {"frame": 0, "function": "EnsureTimeStretcher", "file": "AudioDecoderInputTrack.cpp", "line": 624},
+                        {"frame": 1, "function": "AppendData", "file": "AudioDecoderInputTrack.cpp", "line": 423}
+                    ]
+                }
+            ]
+        }"#
+    }
+
+    #[test]
+    fn test_deserialize_processed_crash() {
+        let crash: ProcessedCrash = serde_json::from_str(sample_crash_json()).unwrap();
+        assert_eq!(crash.uuid, "247653e8-7a18-4836-97d1-42a720260120");
+        assert_eq!(crash.signature, Some("mozilla::AudioDecoderInputTrack::EnsureTimeStretcher".to_string()));
+        assert_eq!(crash.product, Some("Fenix".to_string()));
+        assert_eq!(crash.version, Some("147.0.1".to_string()));
+        assert_eq!(crash.crashing_thread, Some(1));
+    }
+
+    #[test]
+    fn test_to_summary_basic() {
+        let crash: ProcessedCrash = serde_json::from_str(sample_crash_json()).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        assert_eq!(summary.crash_id, "247653e8-7a18-4836-97d1-42a720260120");
+        assert_eq!(summary.signature, "mozilla::AudioDecoderInputTrack::EnsureTimeStretcher");
+        assert_eq!(summary.product, "Fenix");
+        assert_eq!(summary.version, "147.0.1");
+        assert_eq!(summary.reason, Some("SIGSEGV".to_string()));
+        assert_eq!(summary.address, Some("0x0".to_string()));
+        assert_eq!(summary.moz_crash_reason, Some("MOZ_RELEASE_ASSERT(mTimeStretcher->Init())".to_string()));
+    }
+
+    #[test]
+    fn test_to_summary_crashing_thread_frames() {
+        let crash: ProcessedCrash = serde_json::from_str(sample_crash_json()).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        assert_eq!(summary.crashing_thread_name, Some("GraphRunner".to_string()));
+        assert_eq!(summary.frames.len(), 2);
+        assert_eq!(summary.frames[0].function, Some("EnsureTimeStretcher".to_string()));
+    }
+
+    #[test]
+    fn test_to_summary_depth_limit() {
+        let crash: ProcessedCrash = serde_json::from_str(sample_crash_json()).unwrap();
+        let summary = crash.to_summary(1, false);
+
+        assert_eq!(summary.frames.len(), 1);
+        assert_eq!(summary.frames[0].function, Some("EnsureTimeStretcher".to_string()));
+    }
+
+    #[test]
+    fn test_to_summary_all_threads() {
+        let crash: ProcessedCrash = serde_json::from_str(sample_crash_json()).unwrap();
+        let summary = crash.to_summary(10, true);
+
+        assert_eq!(summary.all_threads.len(), 2);
+        assert!(!summary.all_threads[0].is_crashing);
+        assert!(summary.all_threads[1].is_crashing);
+        assert_eq!(summary.all_threads[0].thread_name, Some("MainThread".to_string()));
+        assert_eq!(summary.all_threads[1].thread_name, Some("GraphRunner".to_string()));
+    }
+
+    #[test]
+    fn test_crashing_thread_from_crash_info() {
+        // Test fallback to crash_info.crashing_thread when crashing_thread is not set
+        let json = r#"{
+            "uuid": "test-crash",
+            "crash_info": {
+                "type": "SIGSEGV",
+                "crashing_thread": 0
+            },
+            "threads": [
+                {"thread": 0, "thread_name": "Main", "frames": [{"frame": 0, "function": "foo"}]}
+            ]
+        }"#;
+        let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        assert_eq!(summary.crashing_thread_name, Some("Main".to_string()));
+    }
+
+    #[test]
+    fn test_crashing_thread_from_json_dump() {
+        // Test fallback to json_dump.crashing_thread
+        let json = r#"{
+            "uuid": "test-crash",
+            "json_dump": {
+                "crashing_thread": 0,
+                "threads": [
+                    {"thread": 0, "thread_name": "DumpThread", "frames": [{"frame": 0, "function": "bar"}]}
+                ]
+            }
+        }"#;
+        let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        assert_eq!(summary.crashing_thread_name, Some("DumpThread".to_string()));
+    }
+
+    #[test]
+    fn test_missing_optional_fields() {
+        let json = r#"{"uuid": "minimal-crash"}"#;
+        let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        assert_eq!(summary.crash_id, "minimal-crash");
+        assert_eq!(summary.signature, "Unknown");
+        assert_eq!(summary.product, "Unknown");
+        assert!(summary.frames.is_empty());
     }
 }

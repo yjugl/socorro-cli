@@ -4,27 +4,9 @@ use crate::{Result, SocorroClient};
 
 pub fn execute(
     client: &SocorroClient,
-    signature: Option<String>,
-    product: String,
-    version: Option<String>,
-    platform: Option<String>,
-    days: u32,
-    limit: usize,
-    facets: Vec<String>,
-    sort: String,
+    params: SearchParams,
     format: OutputFormat,
 ) -> Result<()> {
-    let params = SearchParams {
-        signature,
-        product,
-        version,
-        platform,
-        days,
-        limit,
-        facets,
-        sort,
-    };
-
     let response = client.search(params)?;
 
     let output = match format {

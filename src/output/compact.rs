@@ -1,4 +1,6 @@
-use crate::models::{CrashSummary, SearchResponse, StackFrame};
+use crate::models::{CrashSummary, CorrelationsSummary, SearchResponse, StackFrame};
+use crate::models::crash_pings::{CrashPingsSummary, CrashPingStackSummary};
+use crate::commands::crash_pings::format_frame_location;
 
 fn format_function(frame: &StackFrame) -> String {
     if let Some(func) = &frame.function {
@@ -59,8 +61,16 @@ pub fn format_crash(summary: &CrashSummary) -> String {
         summary.product, summary.version, summary.platform, device_info
     ));
 
+    if let Some(build_id) = &summary.build_id {
+        output.push_str(&format!("build: {}\n", build_id));
+    }
+
+    if let Some(channel) = &summary.release_channel {
+        output.push_str(&format!("channel: {}\n", channel));
+    }
+
     if !summary.all_threads.is_empty() {
-        output.push_str("\n");
+        output.push('\n');
         for thread in &summary.all_threads {
             let thread_name = thread.thread_name.as_deref().unwrap_or("unknown");
             let crash_marker = if thread.is_crashing {
@@ -82,10 +92,10 @@ pub fn format_crash(summary: &CrashSummary) -> String {
                 };
                 output.push_str(&format!("  #{} {}{}\n", frame.frame, func, location));
             }
-            output.push_str("\n");
+            output.push('\n');
         }
     } else if !summary.frames.is_empty() {
-        output.push_str("\n");
+        output.push('\n');
         let thread_name = summary.crashing_thread_name.as_deref().unwrap_or("unknown");
         output.push_str(&format!("stack[{}]:\n", thread_name));
 
@@ -103,19 +113,371 @@ pub fn format_crash(summary: &CrashSummary) -> String {
     output
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{CrashSummary, CrashHit, FacetBucket, ThreadSummary};
+    use std::collections::HashMap;
+
+    fn sample_crash_summary() -> CrashSummary {
+        CrashSummary {
+            crash_id: "247653e8-7a18-4836-97d1-42a720260120".to_string(),
+            signature: "mozilla::AudioDecoderInputTrack::EnsureTimeStretcher".to_string(),
+            reason: Some("SIGSEGV".to_string()),
+            address: Some("0x0".to_string()),
+            moz_crash_reason: Some("MOZ_RELEASE_ASSERT(mTimeStretcher->Init())".to_string()),
+            abort_message: None,
+            product: "Fenix".to_string(),
+            version: "147.0.1".to_string(),
+            build_id: Some("20240115103000".to_string()),
+            release_channel: Some("release".to_string()),
+            platform: "Android 36".to_string(),
+            android_version: Some("36".to_string()),
+            android_model: Some("SM-S918B".to_string()),
+            crashing_thread_name: Some("GraphRunner".to_string()),
+            frames: vec![
+                StackFrame {
+                    frame: 0,
+                    function: Some("EnsureTimeStretcher".to_string()),
+                    file: Some("AudioDecoderInputTrack.cpp".to_string()),
+                    line: Some(624),
+                    module: None,
+                    offset: None,
+                },
+            ],
+            all_threads: vec![],
+        }
+    }
+
+    #[test]
+    fn test_format_crash_header() {
+        let summary = sample_crash_summary();
+        let output = format_crash(&summary);
+
+        assert!(output.contains("CRASH 247653e8-7a18-4836-97d1-42a720260120"));
+        assert!(output.contains("sig: mozilla::AudioDecoderInputTrack::EnsureTimeStretcher"));
+    }
+
+    #[test]
+    fn test_format_crash_reason_with_null_ptr() {
+        let summary = sample_crash_summary();
+        let output = format_crash(&summary);
+
+        assert!(output.contains("reason: SIGSEGV @ 0x0 (null ptr)"));
+    }
+
+    #[test]
+    fn test_format_crash_moz_reason() {
+        let summary = sample_crash_summary();
+        let output = format_crash(&summary);
+
+        assert!(output.contains("moz_reason: MOZ_RELEASE_ASSERT(mTimeStretcher->Init())"));
+    }
+
+    #[test]
+    fn test_format_crash_product_with_device() {
+        let summary = sample_crash_summary();
+        let output = format_crash(&summary);
+
+        assert!(output.contains("product: Fenix 147.0.1 (Android 36, SM-S918B 36)"));
+    }
+
+    #[test]
+    fn test_format_crash_stack_trace() {
+        let summary = sample_crash_summary();
+        let output = format_crash(&summary);
+
+        assert!(output.contains("stack[GraphRunner]:"));
+        assert!(output.contains("#0 EnsureTimeStretcher @ AudioDecoderInputTrack.cpp:624"));
+    }
+
+    #[test]
+    fn test_format_crash_with_all_threads() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![
+            ThreadSummary {
+                thread_index: 0,
+                thread_name: Some("MainThread".to_string()),
+                frames: vec![],
+                is_crashing: false,
+            },
+            ThreadSummary {
+                thread_index: 1,
+                thread_name: Some("GraphRunner".to_string()),
+                frames: vec![],
+                is_crashing: true,
+            },
+        ];
+        let output = format_crash(&summary);
+
+        assert!(output.contains("stack[thread 0:MainThread]:"));
+        assert!(output.contains("stack[thread 1:GraphRunner [CRASHING]]:"));
+    }
+
+    #[test]
+    fn test_format_search_basic() {
+        let response = SearchResponse {
+            total: 42,
+            hits: vec![
+                CrashHit {
+                    uuid: "247653e8-7a18-4836-97d1-42a720260120".to_string(),
+                    date: "2024-01-15".to_string(),
+                    signature: "mozilla::SomeFunction".to_string(),
+                    product: "Firefox".to_string(),
+                    version: "120.0".to_string(),
+                    platform: Some("Windows".to_string()),
+                    build_id: Some("20240115103000".to_string()),
+                    release_channel: Some("release".to_string()),
+                    platform_version: Some("10.0.19045".to_string()),
+                },
+            ],
+            facets: HashMap::new(),
+        };
+        let output = format_search(&response);
+
+        assert!(output.contains("FOUND 42 crashes"));
+        assert!(output.contains("247653e8"));
+        assert!(output.contains("Firefox 120.0"));
+        assert!(output.contains("Windows 10.0.19045"));
+        assert!(output.contains("mozilla::SomeFunction"));
+    }
+
+    #[test]
+    fn test_format_search_with_facets() {
+        let mut facets = HashMap::new();
+        facets.insert("version".to_string(), vec![
+            FacetBucket { term: "120.0".to_string(), count: 50 },
+            FacetBucket { term: "119.0".to_string(), count: 30 },
+        ]);
+        let response = SearchResponse {
+            total: 80,
+            hits: vec![],
+            facets,
+        };
+        let output = format_search(&response);
+
+        assert!(output.contains("AGGREGATIONS:"));
+        assert!(output.contains("version:"));
+        assert!(output.contains("120.0 (50)"));
+        assert!(output.contains("119.0 (30)"));
+    }
+
+    #[test]
+    fn test_format_function_with_function_name() {
+        let frame = StackFrame {
+            frame: 0,
+            function: Some("my_function".to_string()),
+            file: None,
+            line: None,
+            module: None,
+            offset: None,
+        };
+        assert_eq!(format_function(&frame), "my_function");
+    }
+
+    #[test]
+    fn test_format_function_without_function_name() {
+        let frame = StackFrame {
+            frame: 0,
+            function: None,
+            file: None,
+            line: None,
+            module: Some("libfoo.so".to_string()),
+            offset: Some("0x1234".to_string()),
+        };
+        assert_eq!(format_function(&frame), "0x1234 (libfoo.so)");
+    }
+
+    #[test]
+    fn test_format_function_unknown() {
+        let frame = StackFrame {
+            frame: 0,
+            function: None,
+            file: None,
+            line: None,
+            module: None,
+            offset: None,
+        };
+        assert_eq!(format_function(&frame), "???");
+    }
+
+    use crate::models::{CorrelationsSummary, CorrelationItem, CorrelationItemPrior};
+
+    fn sample_correlations_summary() -> CorrelationsSummary {
+        CorrelationsSummary {
+            signature: "TestSig".to_string(),
+            channel: "release".to_string(),
+            date: "2026-02-13".to_string(),
+            sig_count: 220.0,
+            ref_count: 79268,
+            items: vec![
+                CorrelationItem {
+                    label: "Module \"cscapi.dll\" = true".to_string(),
+                    sig_pct: 100.0,
+                    ref_pct: 24.51,
+                    prior: None,
+                },
+                CorrelationItem {
+                    label: "startup_crash = null".to_string(),
+                    sig_pct: 29.55,
+                    ref_pct: 1.16,
+                    prior: Some(CorrelationItemPrior {
+                        label: "process_type = parent".to_string(),
+                        sig_pct: 50.91,
+                        ref_pct: 4.58,
+                    }),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_format_correlations_header() {
+        let summary = sample_correlations_summary();
+        let output = format_correlations(&summary);
+        assert!(output.contains("CORRELATIONS for \"TestSig\" (release, data from 2026-02-13)"));
+        assert!(output.contains("sig_count: 220, ref_count: 79268"));
+    }
+
+    #[test]
+    fn test_format_correlations_items() {
+        let summary = sample_correlations_summary();
+        let output = format_correlations(&summary);
+        assert!(output.contains("(100.00% vs 24.51% overall) Module \"cscapi.dll\" = true"));
+    }
+
+    #[test]
+    fn test_format_correlations_with_prior() {
+        let summary = sample_correlations_summary();
+        let output = format_correlations(&summary);
+        assert!(output.contains("(029.55% vs 01.16% overall) startup_crash = null [50.91% vs 04.58% if process_type = parent]"));
+    }
+
+    #[test]
+    fn test_format_correlations_empty() {
+        let summary = CorrelationsSummary {
+            signature: "EmptySig".to_string(),
+            channel: "release".to_string(),
+            date: "2026-02-13".to_string(),
+            sig_count: 0.0,
+            ref_count: 79268,
+            items: vec![],
+        };
+        let output = format_correlations(&summary);
+        assert!(output.contains("No correlations found."));
+    }
+}
+
+pub fn format_correlations(summary: &CorrelationsSummary) -> String {
+    let mut output = String::new();
+
+    output.push_str(&format!(
+        "CORRELATIONS for \"{}\" ({}, data from {})\n",
+        summary.signature, summary.channel, summary.date
+    ));
+    output.push_str(&format!(
+        "sig_count: {}, ref_count: {}\n\n",
+        summary.sig_count as u64, summary.ref_count
+    ));
+
+    if summary.items.is_empty() {
+        output.push_str("No correlations found.\n");
+    } else {
+        for item in &summary.items {
+            let prior_str = if let Some(prior) = &item.prior {
+                format!(
+                    " [{:05.2}% vs {:05.2}% if {}]",
+                    prior.sig_pct, prior.ref_pct, prior.label
+                )
+            } else {
+                String::new()
+            };
+            output.push_str(&format!(
+                "({:06.2}% vs {:05.2}% overall) {}{}\n",
+                item.sig_pct, item.ref_pct, item.label, prior_str
+            ));
+        }
+    }
+
+    output
+}
+
+pub fn format_crash_pings(summary: &CrashPingsSummary) -> String {
+    let mut output = String::new();
+
+    let filter_str = if let Some(ref sig) = summary.signature_filter {
+        format!(": \"{}\" ({} pings)", sig, summary.filtered_total)
+    } else {
+        format!(" ({} pings, sampled)", summary.total)
+    };
+    output.push_str(&format!("CRASH PINGS {}{}\n\n", summary.date, filter_str));
+
+    if summary.facet_name != "signature" || summary.signature_filter.is_some() {
+        output.push_str(&format!("{}:\n", summary.facet_name));
+    }
+
+    if summary.items.is_empty() {
+        output.push_str("  (no matching pings)\n");
+    } else {
+        for item in &summary.items {
+            output.push_str(&format!(
+                "  {} ({}, {:.2}%)\n",
+                item.label, item.count, item.percentage
+            ));
+        }
+    }
+
+    output
+}
+
+pub fn format_crash_ping_stack(summary: &CrashPingStackSummary) -> String {
+    let mut output = String::new();
+
+    output.push_str(&format!(
+        "CRASH PING {} ({})\n",
+        summary.crash_id, summary.date
+    ));
+
+    if summary.frames.is_empty() {
+        if summary.java_exception.is_some() {
+            output.push_str("\njava_exception:\n");
+            if let Some(ref exc) = summary.java_exception {
+                output.push_str(&format!("  {}\n", exc));
+            }
+        } else {
+            output.push_str("\nNo stack trace available.\n");
+        }
+    } else {
+        output.push_str("\nstack:\n");
+        for (i, frame) in summary.frames.iter().enumerate() {
+            output.push_str(&format!("  #{} {}\n", i, format_frame_location(frame)));
+        }
+    }
+
+    output
+}
+
 pub fn format_search(response: &SearchResponse) -> String {
     let mut output = String::new();
 
     output.push_str(&format!("FOUND {} crashes\n\n", response.total));
 
     for hit in &response.hits {
-        let platform = hit.os_name.as_deref().unwrap_or("Unknown");
-        output.push_str(&format!(
-            "{} | {} {} | {} | {}\n",
-            &hit.uuid[..8],
+        let platform = match (&hit.platform, &hit.platform_version) {
+            (Some(p), Some(v)) => format!("{} {}", p, v),
+            (Some(p), None) => p.clone(),
+            (None, Some(v)) => v.clone(),
+            (None, None) => "?".to_string(),
+        };
+        let channel = hit.release_channel.as_deref().unwrap_or("?");
+        let build = hit.build_id.as_deref().unwrap_or("?");
+        output.push_str(&format!("{} | {} {} | {} | {} | {} | {}\n",
+            hit.uuid,
             hit.product,
             hit.version,
             platform,
+            channel,
+            build,
             hit.signature
         ));
     }

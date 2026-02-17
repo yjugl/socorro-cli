@@ -4,11 +4,88 @@ A Rust CLI tool for querying Mozilla's Socorro crash reporting system, optimized
 
 Written by Claude Code *NOT YET REVIEWED THOROUGHLY***.
 
+If you're a human user, you probably want
+[crashstats-tools](https://github.com/mozilla-services/crashstats-tools)
+instead. It's the official Python CLI maintained by Mozilla with more features
+for interactive use.
+
+| Feature | socorro-cli | crashstats-tools |
+|---------|-------------|------------------|
+| **Target audience** | AI agents | Humans |
+| **Output format** | Token-optimized (compact) | Human-readable tables |
+| **Token security** | Keychain storage (hidden from AI) | Environment variable |
+| **Query interface** | Curated CLI options | Arbitrary Super Search fields |
+| **Download raw data** | No | Yes (raw crashes, minidumps) |
+| **Reprocess crashes** | No | Yes |
+| **Super Search URL** | No | Yes (copy-paste from web UI) |
+
+socorro-cli exists because AI agents benefit from:
+- Compact output that minimizes token usage
+- Secure token storage that prevents the AI from reading credentials
+- Simplified options that reduce prompt complexity
+
 ## Installation
 
 ```bash
 cargo install --path .
 ```
+
+## Configuration
+
+### API Token
+
+For higher rate limits, API tokens can be used. Humans can create an API token
+at https://crash-stats.mozilla.org/api/tokens/ (requires login). Tokens for use
+by socorro-cli must be created **without any permission attached to them**,
+which still provides rate limit benefits (and only that).
+
+Whenever possible, tokens should not be directly shared with an AI agent nor
+stored in a location that's easily accessible to an AI agent. We recommend
+using:
+
+```bash
+# Store token securely (for humans, prompts for token, input is hidden)
+socorro-cli auth login
+
+# Check if a token is stored (for humans or AI agents)
+socorro-cli auth status
+
+# Remove stored token (for humans)
+socorro-cli auth logout
+```
+
+In that case, the token is stored in the operating system's secure credential
+storage:
+- **macOS**: Keychain
+- **Windows**: Credential Manager
+- **Linux**: Secret Service (GNOME Keyring, KWallet, etc.)
+
+### CI/Headless Environments
+
+Some environments lack a system keychain (Docker containers, CI systems like
+TaskCluster, SSH sessions, headless servers). For these cases, use the
+`SOCORRO_API_TOKEN_PATH` environment variable to point to a file containing
+the token:
+
+```bash
+# Create token file (outside project directory, restricted permissions)
+echo "your_token_here" > ~/.socorro-token
+chmod 600 ~/.socorro-token
+
+# Set the environment variable to the file path
+export SOCORRO_API_TOKEN_PATH=~/.socorro-token
+```
+
+**Security note**: The token file should be stored in a location that AI agents
+cannot read. Recommended practices:
+- Store outside the project directory (e.g., `~/.socorro-token`)
+- Use restrictive file permissions (`chmod 600`)
+- Never commit the token file or its path to version control
+- Consider using a path outside directories typically allowed for AI agents
+
+The CLI checks the keychain first, falling back to reading from the file
+specified by `SOCORRO_API_TOKEN_PATH` only if the keychain is unavailable or
+empty.
 
 ## Usage
 
@@ -32,6 +109,37 @@ socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --depth 5
 # Different output formats
 socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --format markdown
 socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --format json
+```
+
+### Crash Pings Command
+
+Query Firefox crash pings — opt-out telemetry that represents the actual crash
+experience (~1.7M/day vs ~40K/day for opt-in Socorro reports):
+
+```bash
+# Top crash signatures from yesterday's pings
+socorro-cli crash-pings
+
+# Specify date
+socorro-cli crash-pings --date 2026-02-12
+
+# Filter by channel, OS, process type
+socorro-cli crash-pings --channel release --os Windows
+socorro-cli crash-pings --process main --version 147.0.3
+
+# Filter by signature (exact or contains with ~ prefix)
+socorro-cli crash-pings --signature "OOM | small"
+
+# Aggregate by a field instead of signature
+socorro-cli crash-pings --signature "OOM | small" --facet os
+socorro-cli crash-pings --facet process
+
+# Fetch symbolicated stack for a specific crash ping
+socorro-cli crash-pings --stack <crashid> --date 2026-02-12
+
+# Different output formats
+socorro-cli crash-pings --format json
+socorro-cli crash-pings --format markdown
 ```
 
 ### Search Command
@@ -83,14 +191,27 @@ Formatted output for documentation and chat interfaces.
 - `--full`: Output complete crash data without omissions (forces JSON format)
 - `--all-threads`: Show stacks from all threads (useful for diagnosing deadlocks)
 
+### Crash Pings Options
+- `--date <DATE>`: Date to query (YYYY-MM-DD) [default: yesterday UTC]
+- `--channel <CH>`: Filter by release channel (release, beta, nightly)
+- `--os <OS>`: Filter by OS (Windows, Linux, Mac, Android)
+- `--process <PROC>`: Filter by process type (main, content, gpu, rdd, utility, socket, gmplugin)
+- `--version <VER>`: Filter by product version
+- `--signature <SIG>`: Filter by crash signature (use ~ prefix for contains match)
+- `--arch <ARCH>`: Filter by CPU architecture
+- `--facet <FIELD>`: Aggregate by field [default: signature]
+- `--limit <N>`: Number of top entries to show [default: 10]
+- `--stack <ID>`: Fetch symbolicated stack for a specific crash ping
+
 ### Search Options
 - `--signature <SIG>`: Filter by crash signature (supports wildcards)
 - `--product <PROD>`: Filter by product [default: Firefox]
 - `--version <VER>`: Filter by version
 - `--platform <PLAT>`: Filter by platform (Windows, Linux, Mac, Android)
 - `--days <N>`: Search crashes from last N days [default: 7]
-- `--limit <N>`: Maximum results to return [default: 10]
+- `--limit <N>`: Maximum individual crash results to return [default: 10, or 0 when --facet is used]
 - `--facet <FIELD>`: Aggregate by field (can be repeated)
+- `--facets-size <N>`: Number of facet buckets to return (e.g., top N signatures)
 - `--sort <FIELD>`: Sort field [default: -date]
 
 ## Examples
@@ -170,14 +291,11 @@ socorro-cli search --signature "AudioDecoderInputTrack" --product Fenix --days 3
 # 5b7622f7 | Fenix 147.0.1 | Unknown | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
 # ...
 
-# Aggregate crashes by platform and version
-socorro-cli search --product Firefox --days 7 --facet platform --facet version --limit 5
+# Aggregate crashes by platform and version (only aggregations shown)
+socorro-cli search --product Firefox --days 7 --facet platform --facet version
 
 # Output:
 # FOUND 69146 crashes
-#
-# 6df5bc35 | Firefox 143.0 | Unknown | OOM | small
-# ...
 #
 # AGGREGATIONS:
 #
@@ -191,11 +309,14 @@ socorro-cli search --product Firefox --days 7 --facet platform --facet version -
 #   Linux (12000)
 #   ...
 
+# Show 5 individual crashes alongside aggregations
+socorro-cli search --product Firefox --days 7 --facet platform --facet version --limit 5
+
 # Find crashes on specific platform and version
 socorro-cli search --product Firefox --platform Windows --version 147.0.1 --days 14
 
-# Top crashes by signature
-socorro-cli search --product Firefox --days 7 --facet signature --limit 20
+# Top 20 crash signatures by volume
+socorro-cli search --product Firefox --days 7 --facet signature --facets-size 20
 
 # Recent Android crashes
 socorro-cli search --product Fenix --platform Android --days 3 --limit 20
