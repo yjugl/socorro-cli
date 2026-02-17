@@ -1,6 +1,6 @@
-use crate::models::{CrashSummary, CorrelationsSummary, SearchResponse, StackFrame};
-use crate::models::crash_pings::{CrashPingsSummary, CrashPingStackSummary};
 use crate::commands::crash_pings::format_frame_location;
+use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
+use crate::models::{CorrelationsSummary, CrashSummary, SearchResponse, StackFrame};
 
 fn format_function(frame: &StackFrame) -> String {
     if let Some(func) = &frame.function {
@@ -116,7 +116,7 @@ pub fn format_crash(summary: &CrashSummary) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{CrashSummary, CrashHit, FacetBucket, ThreadSummary};
+    use crate::models::{CrashHit, CrashSummary, FacetBucket, ThreadSummary};
     use std::collections::HashMap;
 
     fn sample_crash_summary() -> CrashSummary {
@@ -135,16 +135,14 @@ mod tests {
             android_version: Some("36".to_string()),
             android_model: Some("SM-S918B".to_string()),
             crashing_thread_name: Some("GraphRunner".to_string()),
-            frames: vec![
-                StackFrame {
-                    frame: 0,
-                    function: Some("EnsureTimeStretcher".to_string()),
-                    file: Some("AudioDecoderInputTrack.cpp".to_string()),
-                    line: Some(624),
-                    module: None,
-                    offset: None,
-                },
-            ],
+            frames: vec![StackFrame {
+                frame: 0,
+                function: Some("EnsureTimeStretcher".to_string()),
+                file: Some("AudioDecoderInputTrack.cpp".to_string()),
+                line: Some(624),
+                module: None,
+                offset: None,
+            }],
             all_threads: vec![],
         }
     }
@@ -218,19 +216,17 @@ mod tests {
     fn test_format_search_basic() {
         let response = SearchResponse {
             total: 42,
-            hits: vec![
-                CrashHit {
-                    uuid: "247653e8-7a18-4836-97d1-42a720260120".to_string(),
-                    date: "2024-01-15".to_string(),
-                    signature: "mozilla::SomeFunction".to_string(),
-                    product: "Firefox".to_string(),
-                    version: "120.0".to_string(),
-                    platform: Some("Windows".to_string()),
-                    build_id: Some("20240115103000".to_string()),
-                    release_channel: Some("release".to_string()),
-                    platform_version: Some("10.0.19045".to_string()),
-                },
-            ],
+            hits: vec![CrashHit {
+                uuid: "247653e8-7a18-4836-97d1-42a720260120".to_string(),
+                date: "2024-01-15".to_string(),
+                signature: "mozilla::SomeFunction".to_string(),
+                product: "Firefox".to_string(),
+                version: "120.0".to_string(),
+                platform: Some("Windows".to_string()),
+                build_id: Some("20240115103000".to_string()),
+                release_channel: Some("release".to_string()),
+                platform_version: Some("10.0.19045".to_string()),
+            }],
             facets: HashMap::new(),
         };
         let output = format_search(&response);
@@ -245,10 +241,19 @@ mod tests {
     #[test]
     fn test_format_search_with_facets() {
         let mut facets = HashMap::new();
-        facets.insert("version".to_string(), vec![
-            FacetBucket { term: "120.0".to_string(), count: 50 },
-            FacetBucket { term: "119.0".to_string(), count: 30 },
-        ]);
+        facets.insert(
+            "version".to_string(),
+            vec![
+                FacetBucket {
+                    term: "120.0".to_string(),
+                    count: 50,
+                },
+                FacetBucket {
+                    term: "119.0".to_string(),
+                    count: 30,
+                },
+            ],
+        );
         let response = SearchResponse {
             total: 80,
             hits: vec![],
@@ -301,7 +306,7 @@ mod tests {
         assert_eq!(format_function(&frame), "???");
     }
 
-    use crate::models::{CorrelationsSummary, CorrelationItem, CorrelationItemPrior};
+    use crate::models::{CorrelationItem, CorrelationItemPrior, CorrelationsSummary};
 
     fn sample_correlations_summary() -> CorrelationsSummary {
         CorrelationsSummary {
@@ -471,14 +476,9 @@ pub fn format_search(response: &SearchResponse) -> String {
         };
         let channel = hit.release_channel.as_deref().unwrap_or("?");
         let build = hit.build_id.as_deref().unwrap_or("?");
-        output.push_str(&format!("{} | {} {} | {} | {} | {} | {}\n",
-            hit.uuid,
-            hit.product,
-            hit.version,
-            platform,
-            channel,
-            build,
-            hit.signature
+        output.push_str(&format!(
+            "{} | {} {} | {} | {} | {} | {}\n",
+            hit.uuid, hit.product, hit.version, platform, channel, build, hit.signature
         ));
     }
 

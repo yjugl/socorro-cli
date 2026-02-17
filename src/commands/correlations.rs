@@ -1,9 +1,9 @@
-use sha1::{Sha1, Digest};
 use reqwest::StatusCode;
+use sha1::{Digest, Sha1};
 
-use crate::{Error, Result};
 use crate::models::{CorrelationsResponse, CorrelationsTotals};
-use crate::output::{OutputFormat, compact, json, markdown};
+use crate::output::{compact, json, markdown, OutputFormat};
+use crate::{Error, Result};
 
 const CDN_BASE: &str =
     "https://analysis-output.telemetry.mozilla.org/top-signatures-correlations/data";
@@ -53,9 +53,7 @@ fn fetch_signature_correlations(
 }
 
 pub fn execute(signature: &str, channel: &str, format: OutputFormat) -> Result<()> {
-    let client = reqwest::blocking::Client::builder()
-        .gzip(true)
-        .build()?;
+    let client = reqwest::blocking::Client::builder().gzip(true).build()?;
 
     let totals = fetch_totals(&client)?;
 

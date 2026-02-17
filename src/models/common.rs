@@ -1,6 +1,8 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
-pub fn deserialize_string_or_number<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+pub fn deserialize_string_or_number<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {

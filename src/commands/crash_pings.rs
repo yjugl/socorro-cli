@@ -2,20 +2,17 @@ use std::collections::HashMap;
 
 use reqwest::StatusCode;
 
-use crate::{Error, Result};
 use crate::cache;
 use crate::models::crash_pings::{
     CrashPingFilters, CrashPingFrame, CrashPingStackResponse, CrashPingStackSummary,
     CrashPingsItem, CrashPingsResponse, CrashPingsSummary,
 };
 use crate::output::{compact, json, markdown, OutputFormat};
+use crate::{Error, Result};
 
 const BASE_URL: &str = "https://crash-pings.mozilla.org";
 
-fn fetch_ping_data(
-    client: &reqwest::blocking::Client,
-    date: &str,
-) -> Result<CrashPingsResponse> {
+fn fetch_ping_data(client: &reqwest::blocking::Client, date: &str) -> Result<CrashPingsResponse> {
     let cache_key = format!("crash-pings-{}.json", date);
 
     // Try cache first
@@ -33,17 +30,20 @@ fn fetch_ping_data(
             let bytes = response.bytes()?;
             // Cache the raw response
             cache::write_cache(&cache_key, &bytes);
-            serde_json::from_slice(&bytes)
-                .map_err(|e| Error::ParseError(format!("{}: {}", e, String::from_utf8_lossy(&bytes[..bytes.len().min(200)]))))
+            serde_json::from_slice(&bytes).map_err(|e| {
+                Error::ParseError(format!(
+                    "{}: {}",
+                    e,
+                    String::from_utf8_lossy(&bytes[..bytes.len().min(200)])
+                ))
+            })
         }
-        StatusCode::ACCEPTED => Err(Error::ParseError(
-            format!(
-                "Crash ping data for {} is not available (HTTP 202). \
+        StatusCode::ACCEPTED => Err(Error::ParseError(format!(
+            "Crash ping data for {} is not available (HTTP 202). \
                  Today's data typically appears around 04:00 UTC. \
                  Older dates may also be unavailable.",
-                date
-            ),
-        )),
+            date
+        ))),
         StatusCode::NOT_FOUND => Err(Error::NotFound(format!(
             "No crash ping data for date {}. Data is available from September 2024 onwards.",
             date
@@ -131,13 +131,20 @@ pub fn execute(
     stack_id: Option<&str>,
     format: OutputFormat,
 ) -> Result<()> {
-    let client = reqwest::blocking::Client::builder()
-        .gzip(true)
-        .build()?;
+    let client = reqwest::blocking::Client::builder().gzip(true).build()?;
 
     const VALID_FACETS: &[&str] = &[
-        "signature", "channel", "os", "process", "version", "arch",
-        "osversion", "build_id", "ipc_actor", "reason", "type",
+        "signature",
+        "channel",
+        "os",
+        "process",
+        "version",
+        "arch",
+        "osversion",
+        "build_id",
+        "ipc_actor",
+        "reason",
+        "type",
     ];
     if !VALID_FACETS.contains(&facet) {
         return Err(Error::ParseError(format!(
@@ -169,7 +176,7 @@ pub fn execute(
         let summary = aggregate(&response, &filters, facet, limit, date);
         let output = match format {
             OutputFormat::Compact => compact::format_crash_pings(&summary),
-            OutputFormat::Json => json::format_crash_pings(&response, &filters, facet, limit, date)?,
+            OutputFormat::Json => json::format_crash_pings(&summary)?,
             OutputFormat::Markdown => markdown::format_crash_pings(&summary),
         };
         print!("{}", output);

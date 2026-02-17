@@ -43,9 +43,7 @@ impl SocorroClient {
             }
             StatusCode::NOT_FOUND => Err(Error::NotFound(crash_id.to_string())),
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
-            _ => Err(Error::Http(
-                response.error_for_status().unwrap_err(),
-            )),
+            _ => Err(Error::Http(response.error_for_status().unwrap_err())),
         }
     }
 
@@ -58,7 +56,17 @@ impl SocorroClient {
             ("_sort", params.sort),
         ];
 
-        for col in ["uuid", "date", "signature", "product", "version", "platform", "build_id", "release_channel", "platform_version"] {
+        for col in [
+            "uuid",
+            "date",
+            "signature",
+            "product",
+            "version",
+            "platform",
+            "build_id",
+            "release_channel",
+            "platform_version",
+        ] {
             query_params.push(("_columns", col.to_string()));
         }
 
@@ -109,7 +117,6 @@ impl SocorroClient {
         if let Some(token) = self.get_auth_header() {
             request = request.header("Auth-Token", token);
         }
-
 
         let response = request.send()?;
 
@@ -172,6 +179,8 @@ mod tests {
         assert!(valid_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
 
         let invalid_id = "abcdef01-2345-6789-abcd-ef012345678g"; // 'g' is not hex
-        assert!(!invalid_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
+        assert!(!invalid_id
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '-'));
     }
 }

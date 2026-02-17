@@ -174,7 +174,7 @@ pub struct CrashPingFilters {
 
 // --- Summary types for display ---
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct CrashPingsSummary {
     pub date: String,
     pub total: usize,
@@ -184,7 +184,7 @@ pub struct CrashPingsSummary {
     pub items: Vec<CrashPingsItem>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct CrashPingsItem {
     pub label: String,
     pub count: usize,
@@ -438,7 +438,10 @@ mod tests {
         let resp: CrashPingStackResponse = serde_json::from_value(data).unwrap();
         let stack = resp.stack.unwrap();
         assert_eq!(stack.len(), 2);
-        assert_eq!(stack[0].function.as_deref(), Some("KiRaiseUserExceptionDispatcher"));
+        assert_eq!(
+            stack[0].function.as_deref(),
+            Some("KiRaiseUserExceptionDispatcher")
+        );
         assert_eq!(stack[0].module.as_deref(), Some("ntdll.dll"));
         assert!(stack[0].file.is_none());
         assert_eq!(stack[1].file.as_deref(), Some("SomeFile.cpp"));

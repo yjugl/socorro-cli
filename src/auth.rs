@@ -93,8 +93,8 @@ pub fn store_token(token: &str) -> Result<()> {
 
 /// Removes the API token from the system keychain.
 pub fn delete_token() -> Result<()> {
-    let entry = keyring::Entry::new(SERVICE_NAME, TOKEN_KEY)
-        .map_err(|e| Error::Keyring(e.to_string()))?;
+    let entry =
+        keyring::Entry::new(SERVICE_NAME, TOKEN_KEY).map_err(|e| Error::Keyring(e.to_string()))?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()), // Already deleted

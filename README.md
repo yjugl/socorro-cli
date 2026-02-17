@@ -142,6 +142,26 @@ socorro-cli crash-pings --format json
 socorro-cli crash-pings --format markdown
 ```
 
+### Correlations Command
+
+Show attributes that are statistically over-represented in crashes with a given
+signature compared to the overall crash population:
+
+```bash
+# Show correlations for a signature on the release channel (default)
+socorro-cli correlations --signature "UiaNode::ProviderInfo::~ProviderInfo"
+
+# Show correlations on the nightly channel
+socorro-cli correlations --signature "OOM | small" --channel nightly
+
+# Get raw JSON data
+socorro-cli correlations --signature "OOM | small" --format json
+```
+
+### Correlations Options
+- `--signature <SIG>`: Crash signature (exact match, required)
+- `--channel <CH>`: Release channel (release, beta, nightly, esr) [default: release]
+
 ### Search Command
 
 Search and aggregate crashes with filters:
@@ -204,10 +224,14 @@ Formatted output for documentation and chat interfaces.
 - `--stack <ID>`: Fetch symbolicated stack for a specific crash ping
 
 ### Search Options
-- `--signature <SIG>`: Filter by crash signature (supports wildcards)
+- `--signature <SIG>`: Filter by crash signature (use ~ prefix for contains match)
 - `--product <PROD>`: Filter by product [default: Firefox]
 - `--version <VER>`: Filter by version
-- `--platform <PLAT>`: Filter by platform (Windows, Linux, Mac, Android)
+- `--platform <PLAT>`: Filter by platform (Windows, Linux, Mac OS X, Android)
+- `--cpu-arch <ARCH>`: Filter by CPU architecture (amd64, x86, arm64, arm)
+- `--channel <CH>`: Filter by release channel (release, beta, nightly, esr, aurora, default)
+- `--platform-version <VER>`: Filter by OS version string (e.g., "10.0.19045", use ~ prefix for contains)
+- `--process-type <TYPE>`: Filter by process type (parent, content, gpu, rdd, utility, socket, gmplugin, plugin)
 - `--days <N>`: Search crashes from last N days [default: 7]
 - `--limit <N>`: Maximum individual crash results to return [default: 10, or 0 when --facet is used]
 - `--facet <FIELD>`: Aggregate by field (can be repeated)
@@ -287,8 +311,8 @@ socorro-cli search --signature "AudioDecoderInputTrack" --product Fenix --days 3
 # Output:
 # FOUND 803 crashes
 #
-# 5403b258 | Fenix 147.0.1 | Unknown | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
-# 5b7622f7 | Fenix 147.0.1 | Unknown | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
+# 5403b258-... | Fenix 147.0.1 | Android 36 | release | 20260210 | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
+# 5b7622f7-... | Fenix 147.0.1 | Android 36 | release | 20260210 | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
 # ...
 
 # Aggregate crashes by platform and version (only aggregations shown)

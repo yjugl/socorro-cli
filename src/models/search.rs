@@ -1,6 +1,6 @@
+use super::common::deserialize_string_or_number;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use super::common::deserialize_string_or_number;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResponse {
@@ -73,7 +73,10 @@ mod tests {
         let response: SearchResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.total, 42);
         assert_eq!(response.hits.len(), 1);
-        assert_eq!(response.hits[0].uuid, "247653e8-7a18-4836-97d1-42a720260120");
+        assert_eq!(
+            response.hits[0].uuid,
+            "247653e8-7a18-4836-97d1-42a720260120"
+        );
         assert_eq!(response.hits[0].signature, "mozilla::SomeFunction");
     }
 

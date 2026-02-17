@@ -39,7 +39,9 @@ API TOKEN:
 #[command(name = "socorro-cli")]
 #[command(about = "Query Mozilla's Socorro crash reporting system")]
 #[command(long_about = LONG_ABOUT)]
-#[command(after_help = "Use 'socorro-cli <command> --help' for more information on a specific command.")]
+#[command(
+    after_help = "Use 'socorro-cli <command> --help' for more information on a specific command."
+)]
 struct Cli {
     /// Output format: compact (default, token-efficient), json, or markdown
     #[arg(long, value_enum, default_value = "compact", global = true)]
@@ -433,14 +435,23 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Auth { action } => {
-            match action {
-                AuthAction::Login => socorro_cli::commands::auth::login()?,
-                AuthAction::Logout => socorro_cli::commands::auth::logout()?,
-                AuthAction::Status => socorro_cli::commands::auth::status()?,
-            }
-        }
-        Commands::CrashPings { date, channel, os, process, version, signature, arch, facet, limit, stack } => {
+        Commands::Auth { action } => match action {
+            AuthAction::Login => socorro_cli::commands::auth::login()?,
+            AuthAction::Logout => socorro_cli::commands::auth::logout()?,
+            AuthAction::Status => socorro_cli::commands::auth::status()?,
+        },
+        Commands::CrashPings {
+            date,
+            channel,
+            os,
+            process,
+            version,
+            signature,
+            arch,
+            facet,
+            limit,
+            stack,
+        } => {
             let date = date.unwrap_or_else(|| {
                 let yesterday = chrono::Utc::now() - chrono::Duration::days(1);
                 yesterday.format("%Y-%m-%d").to_string()
@@ -465,11 +476,37 @@ fn run() -> Result<()> {
         Commands::Correlations { signature, channel } => {
             socorro_cli::commands::correlations::execute(&signature, &channel, cli.format)?;
         }
-        Commands::Crash { crash_id, depth, full, all_threads } => {
+        Commands::Crash {
+            crash_id,
+            depth,
+            full,
+            all_threads,
+        } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
-            socorro_cli::commands::crash::execute(&client, &crash_id, depth, full, all_threads, cli.format)?;
+            socorro_cli::commands::crash::execute(
+                &client,
+                &crash_id,
+                depth,
+                full,
+                all_threads,
+                cli.format,
+            )?;
         }
-        Commands::Search { signature, product, version, platform, cpu_arch, channel, platform_version, process_type, days, limit, facet, facets_size, sort } => {
+        Commands::Search {
+            signature,
+            product,
+            version,
+            platform,
+            cpu_arch,
+            channel,
+            platform_version,
+            process_type,
+            days,
+            limit,
+            facet,
+            facets_size,
+            sort,
+        } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             let limit = limit.unwrap_or(if facet.is_empty() { 10 } else { 0 });
             let params = socorro_cli::models::SearchParams {

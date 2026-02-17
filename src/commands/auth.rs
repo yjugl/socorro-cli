@@ -44,7 +44,10 @@ fn check_token_path_fallback() {
         if std::path::Path::new(&path).exists() {
             println!("SOCORRO_API_TOKEN_PATH is set and file exists (CI fallback).");
         } else {
-            println!("SOCORRO_API_TOKEN_PATH is set but file does not exist: {}", path);
+            println!(
+                "SOCORRO_API_TOKEN_PATH is set but file does not exist: {}",
+                path
+            );
         }
     }
 }

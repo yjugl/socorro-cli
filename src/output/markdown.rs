@@ -1,6 +1,6 @@
-use crate::models::{CrashSummary, CorrelationsSummary, SearchResponse, StackFrame};
-use crate::models::crash_pings::{CrashPingsSummary, CrashPingStackSummary};
 use crate::commands::crash_pings::format_frame_location;
+use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
+use crate::models::{CorrelationsSummary, CrashSummary, SearchResponse, StackFrame};
 
 fn format_function(frame: &StackFrame) -> String {
     if let Some(func) = &frame.function {
@@ -62,14 +62,20 @@ pub fn format_crash(summary: &CrashSummary) -> String {
         _ => String::new(),
     };
 
-    output.push_str(&format!("- **Product:** {} {}\n", summary.product, summary.version));
+    output.push_str(&format!(
+        "- **Product:** {} {}\n",
+        summary.product, summary.version
+    ));
     if let Some(build_id) = &summary.build_id {
         output.push_str(&format!("- **Build ID:** {}\n", build_id));
     }
     if let Some(channel) = &summary.release_channel {
         output.push_str(&format!("- **Release Channel:** {}\n", channel));
     }
-    output.push_str(&format!("- **Platform:** {}{}\n\n", summary.platform, device_info));
+    output.push_str(&format!(
+        "- **Platform:** {}{}\n\n",
+        summary.platform, device_info
+    ));
 
     if !summary.all_threads.is_empty() {
         output.push_str("## All Threads\n\n");
@@ -127,8 +133,12 @@ pub fn format_search(response: &SearchResponse) -> String {
 
     if !response.hits.is_empty() {
         output.push_str("## Crashes\n\n");
-        output.push_str("| Crash ID | Product | Version | Platform | Channel | Build ID | Signature |\n");
-        output.push_str("|----------|---------|---------|----------|---------|----------|----------|\n");
+        output.push_str(
+            "| Crash ID | Product | Version | Platform | Channel | Build ID | Signature |\n",
+        );
+        output.push_str(
+            "|----------|---------|---------|----------|---------|----------|----------|\n",
+        );
 
         for hit in &response.hits {
             let platform = match (&hit.platform, &hit.platform_version) {
@@ -139,14 +149,9 @@ pub fn format_search(response: &SearchResponse) -> String {
             };
             let channel = hit.release_channel.as_deref().unwrap_or("?");
             let build = hit.build_id.as_deref().unwrap_or("?");
-            output.push_str(&format!("| {} | {} | {} | {} | {} | {} | {} |\n",
-                hit.uuid,
-                hit.product,
-                hit.version,
-                platform,
-                channel,
-                build,
-                hit.signature
+            output.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} |\n",
+                hit.uuid, hit.product, hit.version, platform, channel, build, hit.signature
             ));
         }
         output.push('\n');
@@ -181,10 +186,7 @@ pub fn format_crash_pings(summary: &CrashPingsSummary) -> String {
             sig, summary.filtered_total
         ));
     } else {
-        output.push_str(&format!(
-            "**Total pings:** {} (sampled)\n\n",
-            summary.total
-        ));
+        output.push_str(&format!("**Total pings:** {} (sampled)\n\n", summary.total));
     }
 
     if summary.items.is_empty() {
@@ -273,7 +275,7 @@ pub fn format_correlations(summary: &CorrelationsSummary) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{CrashSummary, CrashHit, FacetBucket, ThreadSummary};
+    use crate::models::{CrashHit, CrashSummary, FacetBucket, ThreadSummary};
     use std::collections::HashMap;
 
     fn sample_crash_summary() -> CrashSummary {
@@ -292,16 +294,14 @@ mod tests {
             android_version: Some("36".to_string()),
             android_model: Some("SM-S918B".to_string()),
             crashing_thread_name: Some("GraphRunner".to_string()),
-            frames: vec![
-                StackFrame {
-                    frame: 0,
-                    function: Some("EnsureTimeStretcher".to_string()),
-                    file: Some("AudioDecoderInputTrack.cpp".to_string()),
-                    line: Some(624),
-                    module: None,
-                    offset: None,
-                },
-            ],
+            frames: vec![StackFrame {
+                frame: 0,
+                function: Some("EnsureTimeStretcher".to_string()),
+                file: Some("AudioDecoderInputTrack.cpp".to_string()),
+                line: Some(624),
+                module: None,
+                offset: None,
+            }],
             all_threads: vec![],
         }
     }
@@ -313,7 +313,8 @@ mod tests {
 
         assert!(output.contains("# Crash Report"));
         assert!(output.contains("**Crash ID:** `247653e8-7a18-4836-97d1-42a720260120`"));
-        assert!(output.contains("**Signature:** `mozilla::AudioDecoderInputTrack::EnsureTimeStretcher`"));
+        assert!(output
+            .contains("**Signature:** `mozilla::AudioDecoderInputTrack::EnsureTimeStretcher`"));
     }
 
     #[test]
@@ -323,7 +324,8 @@ mod tests {
 
         assert!(output.contains("## Details"));
         assert!(output.contains("- **Crash Reason:** SIGSEGV at `0x0` (null pointer)"));
-        assert!(output.contains("- **Mozilla Crash Reason:** MOZ_RELEASE_ASSERT(mTimeStretcher->Init())"));
+        assert!(output
+            .contains("- **Mozilla Crash Reason:** MOZ_RELEASE_ASSERT(mTimeStretcher->Init())"));
     }
 
     #[test]
@@ -373,19 +375,17 @@ mod tests {
     fn test_format_search_markdown_basic() {
         let response = SearchResponse {
             total: 42,
-            hits: vec![
-                CrashHit {
-                    uuid: "247653e8-7a18-4836-97d1-42a720260120".to_string(),
-                    date: "2024-01-15".to_string(),
-                    signature: "mozilla::SomeFunction".to_string(),
-                    product: "Firefox".to_string(),
-                    version: "120.0".to_string(),
-                    platform: Some("Windows".to_string()),
-                    build_id: Some("20240115103000".to_string()),
-                    release_channel: Some("release".to_string()),
-                    platform_version: Some("10.0.19045".to_string()),
-                },
-            ],
+            hits: vec![CrashHit {
+                uuid: "247653e8-7a18-4836-97d1-42a720260120".to_string(),
+                date: "2024-01-15".to_string(),
+                signature: "mozilla::SomeFunction".to_string(),
+                product: "Firefox".to_string(),
+                version: "120.0".to_string(),
+                platform: Some("Windows".to_string()),
+                build_id: Some("20240115103000".to_string()),
+                release_channel: Some("release".to_string()),
+                platform_version: Some("10.0.19045".to_string()),
+            }],
             facets: HashMap::new(),
         };
         let output = format_search(&response);
@@ -393,15 +393,21 @@ mod tests {
         assert!(output.contains("# Search Results"));
         assert!(output.contains("Found **42** crashes"));
         assert!(output.contains("## Crashes"));
-        assert!(output.contains("| Crash ID | Product | Version | Platform | Channel | Build ID | Signature |"));
+        assert!(output.contains(
+            "| Crash ID | Product | Version | Platform | Channel | Build ID | Signature |"
+        ));
     }
 
     #[test]
     fn test_format_search_markdown_with_facets() {
         let mut facets = HashMap::new();
-        facets.insert("version".to_string(), vec![
-            FacetBucket { term: "120.0".to_string(), count: 50 },
-        ]);
+        facets.insert(
+            "version".to_string(),
+            vec![FacetBucket {
+                term: "120.0".to_string(),
+                count: 50,
+            }],
+        );
         let response = SearchResponse {
             total: 50,
             hits: vec![],
@@ -414,7 +420,7 @@ mod tests {
         assert!(output.contains("- **120.0**: 50 crashes"));
     }
 
-    use crate::models::{CorrelationsSummary, CorrelationItem, CorrelationItemPrior};
+    use crate::models::{CorrelationItem, CorrelationItemPrior, CorrelationsSummary};
 
     #[test]
     fn test_format_correlations_markdown_header() {

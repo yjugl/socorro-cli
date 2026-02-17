@@ -40,7 +40,12 @@ cargo fmt
 cargo clippy
 ```
 
-**Important**: Run `cargo clippy` after any Rust code changes to keep the codebase tidy. Fix any warnings before committing.
+**Important — after every code change, run the full check sequence before committing:**
+
+1. **Update documentation**: Update `--help` text (clap attributes in `src/main.rs`) and this `CLAUDE.md` file to reflect any new or changed commands, flags, or behaviors.
+2. **Format**: `cargo fmt`
+3. **Lint**: `cargo clippy` — fix any warnings.
+4. **Test**: `cargo test` — all tests must pass.
 
 ## Architecture
 
@@ -68,7 +73,7 @@ cargo clippy
   - `write_cache()`: Write data to cache by key
 - **src/models/**: Data structures for Socorro API responses
   - **processed_crash.rs**: `ProcessedCrash`, `Thread`, `CrashSummary` - crash data models
-  - **search.rs**: `SearchResponse`, `SearchParams` - search data models
+  - **search.rs**: `SearchResponse`, `SearchParams`, `CrashHit`, `FacetBucket` - search data models. `SearchParams` includes filters: signature, product, version, platform, cpu_arch, release_channel, platform_version, process_type, days, limit, facets, facets_size, sort. `CrashHit` includes build_id, release_channel, and platform_version fields
   - **correlations.rs**: `CorrelationsTotals`, `CorrelationsResponse`, `CorrelationsSummary` - correlation data models
   - **crash_pings.rs**: `CrashPingsResponse`, `CrashPingStackResponse`, `CrashPingsSummary` - crash ping data models (struct-of-arrays with string deduplication)
   - **common.rs**: Shared types like `StackFrame`
@@ -107,10 +112,16 @@ With `--all-threads`, it formats all threads (marking the crashing one), useful 
 
 **Facet-aware `--limit` default**: When `--facet` is used, `--limit` defaults to 0 (only aggregations shown). Without `--facet`, it defaults to 10. Users can override with `--limit N` to show individual crash rows alongside aggregations. `--facets-size` controls how many buckets each facet returns (e.g., top N signatures).
 
-**Error Handling**: Uses `thiserror` for structured errors. Specific handling for:
-- 404 → `NotFound` error with crash ID
-- 429 → `RateLimited` error suggesting API token usage
-- Parse errors include response preview (first 200 chars)
+**Version Checking**: On startup, `moz-cli-version-check` asynchronously checks for newer releases on crates.io. If a newer version is found, a warning is printed after the command completes.
+
+**Error Handling**: Uses `thiserror` for structured errors. The `Error` enum variants:
+- `Http` — wraps `reqwest::Error` for network/HTTP failures
+- `Json` — wraps `serde_json::Error` for deserialization failures
+- `NotFound` — 404 responses, with context (crash ID or date)
+- `RateLimited` — 429 responses, suggests using an API token
+- `ParseError` — parse failures with response preview (first 200 chars)
+- `InvalidCrashId` — crash ID contains invalid characters (injection protection)
+- `Keyring` — keychain/credential storage errors
 
 ## Socorro API Details
 
