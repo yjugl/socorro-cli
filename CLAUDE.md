@@ -47,6 +47,16 @@ cargo clippy
 3. **Lint**: `cargo clippy` — fix any warnings.
 4. **Test**: `cargo test` — all tests must pass.
 
+**License header requirement:** Every new `.rs` source file must include the MPL 2.0 header as the very first lines:
+
+```rust
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+```
+
+followed by a blank line before any code. Do not omit this header from any new file.
+
 ## Architecture
 
 ### Module Structure
