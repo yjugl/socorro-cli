@@ -1,5 +1,4 @@
 /target/
-Cargo.lock
 /socorro/
 
 # Claude Code local files (personal, not shared)
