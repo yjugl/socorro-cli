@@ -8,7 +8,7 @@ pub mod markdown;
 
 use clap::ValueEnum;
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
 pub enum OutputFormat {
     Compact,
     Json,

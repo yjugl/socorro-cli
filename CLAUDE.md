@@ -120,6 +120,8 @@ With `--all-threads`, it formats all threads (marking the crashing one), useful 
 
 **Compact Format**: Default output format is designed to minimize tokens while preserving essential crash information. Uses abbreviations (sig, moz_reason) and omits field labels when clear from context.
 
+**JSON Crash Output Skips Auth Token**: When `crash` output will be JSON (`--full` or `--format json`), the API token is not sent. Without a token, the server strips all protected fields (registers, mac_boot_args, etc. inside `json_dump`) server-side. This is a defense-in-depth measure against human error (e.g., accidentally creating a token with `view_pii` permission) — the primary safeguard is that users must create tokens with no permissions. Compact/markdown output is safe because `to_summary()` only extracts public sub-fields, so those formats still use the token for higher rate limits.
+
 **Facet-aware `--limit` default**: When `--facet` is used, `--limit` defaults to 0 (only aggregations shown). Without `--facet`, it defaults to 10. Users can override with `--limit N` to show individual crash rows alongside aggregations. `--facets-size` controls how many buckets each facet returns (e.g., top N signatures).
 
 **Version Checking**: On startup, `moz-cli-version-check` asynchronously checks for newer releases on crates.io. If a newer version is found, a warning is printed after the command completes.

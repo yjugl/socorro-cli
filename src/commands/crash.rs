@@ -23,7 +23,8 @@ pub fn execute(
     format: OutputFormat,
 ) -> Result<()> {
     let crash_id = extract_crash_id(crash_id);
-    let crash = client.get_crash(crash_id)?;
+    let use_auth = !full && format != OutputFormat::Json;
+    let crash = client.get_crash(crash_id, use_auth)?;
 
     let output = if full {
         json::format_crash(&crash)?

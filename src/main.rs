@@ -35,9 +35,10 @@ EXAMPLES:
     socorro-cli crash-pings --channel release --os Windows
 
 API TOKEN:
-    For higher rate limits, run 'socorro-cli auth login' to store a token.
-    Create tokens at: https://crash-stats.mozilla.org/api/tokens/
-    Tokens should have NO permissions (provides rate limit benefits only).";
+    For higher rate limits, humans can run 'socorro-cli auth login' to store a token.
+    Humans can create tokens at: https://crash-stats.mozilla.org/api/tokens/
+    IMPORTANT: Tokens MUST have NO permissions (provides rate limit benefits
+    only) to ensure there is no chance that the server returns protected data.";
 
 #[derive(Parser)]
 #[command(name = "socorro-cli")]
@@ -47,7 +48,7 @@ API TOKEN:
     after_help = "Use 'socorro-cli <command> --help' for more information on a specific command."
 )]
 struct Cli {
-    /// Output format: compact (default, token-efficient), json, or markdown
+    /// Output format: compact (default, token-efficient), json, or markdown. Note: json skips the API token for crash fetches (see 'crash --help')
     #[arg(long, value_enum, default_value = "compact", global = true)]
     format: OutputFormat,
 
@@ -74,6 +75,16 @@ EXAMPLES:
 
     # Get full JSON data
     socorro-cli crash <crash-id> --full
+
+RATE LIMITS:
+    --full and --format json skip the API token so the server strips protected
+    fields from the response. This is a defense-in-depth measure against human
+    error (e.g., accidentally creating a token with view_pii permission). The
+    primary safeguard is ensuring your token has NO permissions — humans can
+    verify this at https://crash-stats.mozilla.org/api/tokens/. These modes use
+    unauthenticated rate limits even when a token is configured. Compact and
+    markdown formats are unaffected and still benefit from the token's higher
+    rate limits.
 
 OUTPUT FIELDS:
     sig         - Crash signature (function where crash occurred)
@@ -291,7 +302,7 @@ enum Commands {
         #[arg(long, default_value = "10")]
         depth: usize,
 
-        /// Output complete crash data without omissions (forces JSON format)
+        /// Output complete crash data without omissions (forces JSON; skips API token for privacy, may lower rate limits)
         #[arg(long)]
         full: bool,
 

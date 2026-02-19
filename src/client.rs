@@ -24,7 +24,7 @@ impl SocorroClient {
         auth::get_token()
     }
 
-    pub fn get_crash(&self, crash_id: &str) -> Result<ProcessedCrash> {
+    pub fn get_crash(&self, crash_id: &str, use_auth: bool) -> Result<ProcessedCrash> {
         if !crash_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
             return Err(Error::InvalidCrashId(crash_id.to_string()));
         }
@@ -32,8 +32,10 @@ impl SocorroClient {
         let url = format!("{}/ProcessedCrash/", self.base_url);
         let mut request = self.client.get(&url).query(&[("crash_id", crash_id)]);
 
-        if let Some(token) = self.get_auth_header() {
-            request = request.header("Auth-Token", token);
+        if use_auth {
+            if let Some(token) = self.get_auth_header() {
+                request = request.header("Auth-Token", token);
+            }
         }
 
         let response = request.send()?;
@@ -148,14 +150,14 @@ mod tests {
     #[test]
     fn test_invalid_crash_id_with_spaces() {
         let client = test_client();
-        let result = client.get_crash("invalid crash id");
+        let result = client.get_crash("invalid crash id", true);
         assert!(matches!(result, Err(Error::InvalidCrashId(_))));
     }
 
     #[test]
     fn test_invalid_crash_id_with_special_chars() {
         let client = test_client();
-        let result = client.get_crash("abc123!@#$");
+        let result = client.get_crash("abc123!@#$", true);
         assert!(matches!(result, Err(Error::InvalidCrashId(_))));
     }
 
@@ -163,7 +165,7 @@ mod tests {
     fn test_invalid_crash_id_with_semicolon() {
         // This could be an injection attempt
         let client = test_client();
-        let result = client.get_crash("abc123; DROP TABLE crashes;");
+        let result = client.get_crash("abc123; DROP TABLE crashes;", true);
         assert!(matches!(result, Err(Error::InvalidCrashId(_))));
     }
 
