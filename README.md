@@ -367,6 +367,19 @@ socorro-cli crash <deadlock-crash-id> --all-threads --depth 10 > deadlock-stacks
 socorro-cli search --signature "MyFunction" --facet platform --days 7
 ```
 
+## Data and Privacy
+
+socorro-cli processes only **publicly available data** from Mozilla's crash reporting systems:
+
+- **Crash command**: Fetches processed crash data via the [Socorro API](https://crash-stats.mozilla.org/api/). The tool's data model (`ProcessedCrash`) only deserializes public fields — signature, product, version, OS, stack traces, and crash metadata. [Protected data](https://crash-stats.mozilla.org/documentation/protected_data_access/) fields (user comments, email addresses, URLs from annotations, exploitability ratings) are not captured even if the API returns them. When JSON output is requested (`--full` or `--format json`), the API token is intentionally skipped so the server strips all protected fields server-side — this is a defense-in-depth measure against human error (e.g., accidentally creating a token with `view_pii` permission) that prevents raw `json_dump` sub-fields (registers, mac_boot_args, etc.) from leaking through. **The primary safeguard is ensuring your token has no permissions** — always verify at [API Tokens](https://crash-stats.mozilla.org/api/tokens/).
+- **Search command**: Requests only public columns (uuid, date, signature, product, version, platform, build_id, release_channel, platform_version).
+- **Correlations command**: Fetches pre-computed correlation data from a public CDN, not the Socorro API.
+- **Crash pings command**: Fetches opt-out crash ping telemetry from [crash-pings.mozilla.org](https://crash-pings.mozilla.org/), which contains no protected data.
+
+When using socorro-cli — whether manually or through an AI agent — only provide data from **publicly accessible crash report fields** (stack traces, signatures, module lists, release information). Do not pass [protected crash report data](https://crash-stats.mozilla.org/documentation/protected_data_access/) (such as user comments, email addresses, or URLs from crash annotations) to AI tools analyzing crash reports.
+
+For Mozilla's policies on using AI tools in development, see [AI and Coding](https://firefox-source-docs.mozilla.org/contributing/ai-coding.html). For contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
-MPL 2.0
+This project is licensed under the [Mozilla Public License 2.0](LICENSE).
