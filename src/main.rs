@@ -42,6 +42,7 @@ API TOKEN:
 
 #[derive(Parser)]
 #[command(name = "socorro-cli")]
+#[command(version)]
 #[command(about = "Query Mozilla's Socorro crash reporting system")]
 #[command(long_about = LONG_ABOUT)]
 #[command(
