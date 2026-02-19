@@ -3,7 +3,7 @@
 ## Getting Started
 
 ```bash
-git clone https://github.com/padenot/socorro-cli.git
+git clone https://github.com/yjugl/socorro-cli.git
 cd socorro-cli
 cargo build
 cargo test

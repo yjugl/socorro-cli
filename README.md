@@ -26,7 +26,23 @@ socorro-cli exists because AI agents benefit from:
 
 ## Installation
 
+Pre-built binaries (fastest):
+
 ```bash
+cargo binstall socorro-cli
+```
+
+From source:
+
+```bash
+cargo install socorro-cli
+```
+
+Or clone and build:
+
+```bash
+git clone https://github.com/yjugl/socorro-cli.git
+cd socorro-cli
 cargo install --path .
 ```
 
