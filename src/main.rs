@@ -38,7 +38,12 @@ API TOKEN:
     For higher rate limits, humans can run 'socorro-cli auth login' to store a token.
     Humans can create tokens at: https://crash-stats.mozilla.org/api/tokens/
     IMPORTANT: Tokens MUST have NO permissions (provides rate limit benefits
-    only) to ensure there is no chance that the server returns protected data.";
+    only) to ensure there is no chance that the server returns protected data.
+
+UPDATE CHECK:
+    On each run, socorro-cli checks crates.io for a newer version (cached daily,
+    5-second timeout). If an update is available, a notice is printed to stderr
+    after the command output. Set MOZTOOLS_UPDATE_CHECK=0 to disable.";
 
 #[derive(Parser)]
 #[command(name = "socorro-cli")]

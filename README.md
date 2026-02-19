@@ -103,6 +103,16 @@ The CLI checks the keychain first, falling back to reading from the file
 specified by `SOCORRO_API_TOKEN_PATH` only if the keychain is unavailable or
 empty.
 
+### Update Check
+
+On each run, socorro-cli checks crates.io for a newer version (cached daily,
+5-second timeout). If an update is available, a notice is printed to stderr
+after the command output. To disable:
+
+```bash
+export MOZTOOLS_UPDATE_CHECK=0
+```
+
 ## Usage
 
 ### Crash Command
