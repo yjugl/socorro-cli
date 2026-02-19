@@ -203,12 +203,15 @@ Token-optimized plain text format designed for LLMs:
 ```
 CRASH 247653e8-7a18-4836-97d1-42a720260120
 sig: mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
-reason: SIGSEGV / SEGV_MAPERR @ 0x0 (null ptr)
-product: Fenix 147.0.1 (Android 36, SM-S918B)
+reason: SIGSEGV / SEGV_MAPERR @ 0x0000000000000000
+moz_reason: MOZ_RELEASE_ASSERT(mTimeStretcher->Init())
+product: Fenix 147.0.1 (Android 36, SM-S918B 36 (REL))
+build: 20260116091309
+channel: release
 
 stack[GraphRunner]:
-  #0 EnsureTimeStretcher @ AudioDecoderInputTrack.cpp:624
-  #1 AppendTimeStretchedDataToSegment @ AudioDecoderInputTrack.cpp:423
+  #0 mozilla::AudioDecoderInputTrack::EnsureTimeStretcher() @ ...AudioDecoderInputTrack.cpp:...:624
+  #1 mozilla::AudioDecoderInputTrack::AppendTimeStretchedDataToSegment(...) @ ...AudioDecoderInputTrack.cpp:...:423
 ```
 
 ### JSON
@@ -268,10 +271,12 @@ socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120
 # reason: SIGSEGV / SEGV_MAPERR @ 0x0000000000000000
 # moz_reason: MOZ_RELEASE_ASSERT(mTimeStretcher->Init())
 # product: Fenix 147.0.1 (Android 36, SM-S918B 36 (REL))
+# build: 20260116091309
+# channel: release
 #
 # stack[GraphRunner]:
-#   #0 mozilla::AudioDecoderInputTrack::EnsureTimeStretcher() @ AudioDecoderInputTrack.cpp:624
-#   #1 mozilla::AudioDecoderInputTrack::AppendTimeStretchedDataToSegment(...) @ AudioDecoderInputTrack.cpp:423
+#   #0 mozilla::AudioDecoderInputTrack::EnsureTimeStretcher() @ git:github.com/.../AudioDecoderInputTrack.cpp:...:624
+#   #1 mozilla::AudioDecoderInputTrack::AppendTimeStretchedDataToSegment(...) @ git:github.com/.../AudioDecoderInputTrack.cpp:...:423
 #   ...
 
 # Copy-paste URL directly from browser
@@ -327,8 +332,8 @@ socorro-cli search --signature "AudioDecoderInputTrack" --product Fenix --days 3
 # Output:
 # FOUND 803 crashes
 #
-# 5403b258-... | Fenix 147.0.1 | Android 36 | release | 20260210 | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
-# 5b7622f7-... | Fenix 147.0.1 | Android 36 | release | 20260210 | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
+# 5403b258-aab0-4a25-8c78-4e0070260210 | Fenix 147.0.1 | Android 36 | release | 20260210191108 | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
+# 5b7622f7-d5e6-4427-8ecb-be9f00260210 | Fenix 147.0.1 | Android 36 | release | 20260210191108 | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
 # ...
 
 # Aggregate crashes by platform and version (only aggregations shown)
@@ -345,7 +350,7 @@ socorro-cli search --product Firefox --days 7 --facet platform --facet version
 #   ...
 #
 # platform:
-#   Windows (45000)
+#   Windows NT (45000)
 #   Linux (12000)
 #   ...
 
