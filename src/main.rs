@@ -28,6 +28,9 @@ EXAMPLES:
     # List top crash signatures by volume (like the Top Crashers web UI)
     socorro-cli search --facet signature
 
+    # Show correlations for a crash signature
+    socorro-cli correlations --signature \"OOM | small\"
+
     # Top crash signatures from yesterday's opt-out crash pings
     socorro-cli crash-pings
 
@@ -292,7 +295,25 @@ LIMITATIONS:
 #[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Manage API token stored in system keychain
-    #[command(after_help = "Run 'socorro-cli auth status' to check if a token is stored.")]
+    #[command(
+        long_about = "\
+Manage the API token stored in the system keychain.
+
+Tokens provide higher rate limits (no extra permissions needed).
+Humans can create tokens at: https://crash-stats.mozilla.org/api/tokens/
+IMPORTANT: Tokens MUST have NO permissions attached.
+
+EXAMPLES:
+    # Store a token (prompts for input, hidden)
+    socorro-cli auth login
+
+    # Check if a token is stored
+    socorro-cli auth status
+
+    # Remove stored token
+    socorro-cli auth logout",
+        after_help = "Run 'socorro-cli auth status' to check if a token is stored."
+    )]
     Auth {
         #[command(subcommand)]
         action: AuthAction,
@@ -400,7 +421,7 @@ enum Commands {
         #[arg(long)]
         channel: Option<String>,
 
-        /// Filter by OS version string (e.g., "10.0.19045", "10.0.26100")
+        /// Filter by OS version string (e.g., "10.0.19045"; use ~ prefix for contains match)
         #[arg(long)]
         platform_version: Option<String>,
 

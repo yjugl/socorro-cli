@@ -2,8 +2,6 @@
 
 A Rust CLI tool for querying Mozilla's Socorro crash reporting system, optimized for LLM coding agents.
 
-Written by Claude Code *NOT YET REVIEWED THOROUGHLY***.
-
 If you're a human user, you probably want
 [crashstats-tools](https://github.com/mozilla-services/crashstats-tools)
 instead. It's the official Python CLI maintained by Mozilla with more features
@@ -184,10 +182,6 @@ socorro-cli correlations --signature "OOM | small" --channel nightly
 socorro-cli correlations --signature "OOM | small" --format json
 ```
 
-### Correlations Options
-- `--signature <SIG>`: Crash signature (exact match, required)
-- `--channel <CH>`: Release channel (release, beta, nightly, esr) [default: release]
-
 ### Search Command
 
 Search and aggregate crashes with filters:
@@ -234,6 +228,7 @@ Formatted output for documentation and chat interfaces.
 
 ### Global Options
 - `--format <FORMAT>`: Output format (compact, json, markdown) [default: compact]
+- `--version`/`-V`: Print version
 
 ### Crash Options
 - `--depth <N>`: Stack trace depth [default: 10]
@@ -247,7 +242,7 @@ Formatted output for documentation and chat interfaces.
 - `--process <PROC>`: Filter by process type (main, content, gpu, rdd, utility, socket, gmplugin)
 - `--version <VER>`: Filter by product version
 - `--signature <SIG>`: Filter by crash signature (use ~ prefix for contains match)
-- `--arch <ARCH>`: Filter by CPU architecture
+- `--arch <ARCH>`: Filter by CPU architecture (x86_64, aarch64, x86, arm)
 - `--facet <FIELD>`: Aggregate by field [default: signature]
 - `--limit <N>`: Number of top entries to show [default: 10]
 - `--stack <ID>`: Fetch symbolicated stack for a specific crash ping
@@ -266,6 +261,10 @@ Formatted output for documentation and chat interfaces.
 - `--facet <FIELD>`: Aggregate by field (can be repeated)
 - `--facets-size <N>`: Number of facet buckets to return (e.g., top N signatures)
 - `--sort <FIELD>`: Sort field [default: -date]
+
+### Correlations Options
+- `--signature <SIG>`: Crash signature (exact match, required)
+- `--channel <CH>`: Release channel (release, beta, nightly, esr) [default: release]
 
 ## Examples
 
