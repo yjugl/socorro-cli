@@ -83,6 +83,10 @@ impl SocorroClient {
             query_params.push(("signature", sig));
         }
 
+        if let Some(proto_sig) = params.proto_signature {
+            query_params.push(("proto_signature", proto_sig));
+        }
+
         if let Some(ver) = params.version {
             query_params.push(("version", ver));
         }

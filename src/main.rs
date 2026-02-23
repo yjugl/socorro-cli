@@ -163,6 +163,11 @@ SIGNATURE PATTERNS:
     Exact match:  --signature \"OOM | small\"
     Contains:     --signature \"~AudioDecoder\" (use ~ prefix)
 
+PROTO SIGNATURE:
+    The proto signature is the raw, unsymbolicated crash signature before
+    Socorro's signature generation. Use --proto-signature to search by it.
+    Contains:     --proto-signature \"~libxul.so@0x123abc\"
+
 PRODUCTS:
     Firefox, Fenix, Thunderbird, Firefox Focus, etc.
 
@@ -194,9 +199,10 @@ PLATFORM VERSIONS:
     Use --platform-version \"~10.0.26100\" to filter (~ prefix for contains match).
 
 FACET / SORT FIELDS:
-    signature, product, version, platform, cpu_arch, release_channel,
-    platform_version, platform_pretty_version, process_type, plugin_filename,
-    dom_ipc_enabled, adapter_vendor_id, adapter_device_id
+    signature, proto_signature, product, version, platform, cpu_arch,
+    release_channel, platform_version, platform_pretty_version, process_type,
+    plugin_filename, dom_ipc_enabled, adapter_vendor_id, adapter_device_id,
+    build_id
     Use -field for descending sort (e.g., --sort -date).
 
 FILTER LOGIC:
@@ -401,6 +407,10 @@ EXAMPLES:
         #[arg(long)]
         signature: Option<String>,
 
+        /// Filter by proto signature (raw unsymbolicated signature; use ~ prefix for contains match)
+        #[arg(long)]
+        proto_signature: Option<String>,
+
         /// Filter by product name
         #[arg(long, default_value = "Firefox")]
         product: String,
@@ -536,6 +546,7 @@ fn run() -> Result<()> {
         }
         Commands::Search {
             signature,
+            proto_signature,
             product,
             version,
             platform,
@@ -553,6 +564,7 @@ fn run() -> Result<()> {
             let limit = limit.unwrap_or(if facet.is_empty() { 10 } else { 0 });
             let params = socorro_cli::models::SearchParams {
                 signature,
+                proto_signature,
                 product,
                 version,
                 platform,

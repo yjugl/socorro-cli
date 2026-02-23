@@ -83,7 +83,7 @@ followed by a blank line before any code. Do not omit this header from any new f
   - `write_cache()`: Write data to cache by key
 - **src/models/**: Data structures for Socorro API responses
   - **processed_crash.rs**: `ProcessedCrash`, `Thread`, `CrashSummary` - crash data models
-  - **search.rs**: `SearchResponse`, `SearchParams`, `CrashHit`, `FacetBucket` - search data models. `SearchParams` includes filters: signature, product, version, platform, cpu_arch, release_channel, platform_version, process_type, days, limit, facets, facets_size, sort. `CrashHit` includes build_id, release_channel, and platform_version fields
+  - **search.rs**: `SearchResponse`, `SearchParams`, `CrashHit`, `FacetBucket` - search data models. `SearchParams` includes filters: signature, proto_signature, product, version, platform, cpu_arch, release_channel, platform_version, process_type, days, limit, facets, facets_size, sort. `CrashHit` includes build_id, release_channel, and platform_version fields
   - **correlations.rs**: `CorrelationsTotals`, `CorrelationsResponse`, `CorrelationsSummary` - correlation data models
   - **crash_pings.rs**: `CrashPingsResponse`, `CrashPingStackResponse`, `CrashPingsSummary` - crash ping data models (struct-of-arrays with string deduplication)
   - **common.rs**: Shared types like `StackFrame`
@@ -158,7 +158,7 @@ Run tests with:
 cargo test
 ```
 
-The test suite (96 tests) covers:
+The test suite (97 tests) covers:
 - **Crash ID extraction**: Bare IDs, full URLs, URLs with trailing slashes
 - **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode
 - **Search models**: SearchResponse/CrashHit deserialization, facets parsing

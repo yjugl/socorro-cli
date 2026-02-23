@@ -40,6 +40,7 @@ pub struct FacetBucket {
 
 pub struct SearchParams {
     pub signature: Option<String>,
+    pub proto_signature: Option<String>,
     pub product: String,
     pub version: Option<String>,
     pub platform: Option<String>,
