@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::common::deserialize_string_or_number;
+use super::common::{deserialize_string_or_number, deserialize_string_or_number_required};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -33,6 +33,7 @@ pub struct CrashHit {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FacetBucket {
+    #[serde(deserialize_with = "deserialize_string_or_number_required")]
     pub term: String,
     pub count: u64,
 }
@@ -110,6 +111,29 @@ mod tests {
         assert_eq!(version_facets.len(), 3);
         assert_eq!(version_facets[0].term, "120.0");
         assert_eq!(version_facets[0].count, 50);
+    }
+
+    #[test]
+    fn test_deserialize_facet_with_integer_term() {
+        let json = r#"{
+            "total": 100,
+            "hits": [],
+            "facets": {
+                "build_id": [
+                    {"term": 20251116092356, "count": 47},
+                    {"term": 20251116210936, "count": 40},
+                    {"term": "20251115204042", "count": 22}
+                ]
+            }
+        }"#;
+
+        let response: SearchResponse = serde_json::from_str(json).unwrap();
+        let build_id_facets = response.facets.get("build_id").unwrap();
+        assert_eq!(build_id_facets.len(), 3);
+        assert_eq!(build_id_facets[0].term, "20251116092356");
+        assert_eq!(build_id_facets[0].count, 47);
+        assert_eq!(build_id_facets[1].term, "20251116210936");
+        assert_eq!(build_id_facets[2].term, "20251115204042");
     }
 
     #[test]
