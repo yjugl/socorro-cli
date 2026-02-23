@@ -12,6 +12,9 @@ pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target
 bin-dir = "{ bin }{ binary-ext }"
 pkg-fmt = "tgz"
 
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [[bin]]
 name = "socorro-cli"
 path = "src/main.rs"
