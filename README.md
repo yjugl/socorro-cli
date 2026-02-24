@@ -159,7 +159,7 @@ socorro-cli crash-pings --signature "OOM | small" --facet os
 socorro-cli crash-pings --facet process
 
 # Fetch symbolicated stack for a specific crash ping
-socorro-cli crash-pings --stack <crashid> --date 2026-02-12
+socorro-cli crash-pings --stack b343be53-8ec1-4849-98eb-ca6739a45645 --date 2026-02-23
 
 # Different output formats
 socorro-cli crash-pings --format json
@@ -188,7 +188,7 @@ Search and aggregate crashes with filters:
 
 ```bash
 # Basic search
-socorro-cli search --signature "AudioDecoderInputTrack" --product Fenix
+socorro-cli search --signature "OOM | small"
 
 # Search with filters
 socorro-cli search --product Firefox --platform Windows --days 30 --limit 20
@@ -248,13 +248,16 @@ Formatted output for documentation and chat interfaces.
 - `--stack <ID>`: Fetch symbolicated stack for a specific crash ping
 
 ### Search Options
-- `--signature <SIG>`: Filter by crash signature (use ~ prefix for contains match)
+
+All search filters default to exact match. `--signature`, `--proto-signature`, `--platform-version`, and `--process-type` also support [Super Search operator prefixes](https://crash-stats.mozilla.org/documentation/supersearch/) like `~` for contains match.
+
+- `--signature <SIG>`: Filter by crash signature
 - `--product <PROD>`: Filter by product [default: Firefox]
 - `--version <VER>`: Filter by version
 - `--platform <PLAT>`: Filter by platform (Windows, Linux, Mac OS X, Android)
 - `--cpu-arch <ARCH>`: Filter by CPU architecture (amd64, x86, arm64, arm)
 - `--channel <CH>`: Filter by release channel (release, beta, nightly, esr, aurora, default)
-- `--platform-version <VER>`: Filter by OS version string (e.g., "10.0.19045", use ~ prefix for contains)
+- `--platform-version <VER>`: Filter by OS version string (e.g., "10.0.19045")
 - `--process-type <TYPE>`: Filter by process type (parent, content, gpu, rdd, utility, socket, gmplugin, plugin)
 - `--days <N>`: Search crashes from last N days [default: 7]
 - `--limit <N>`: Maximum individual crash results to return [default: 10, or 0 when --facet is used]
@@ -316,7 +319,7 @@ socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --all-threads --depth 5
 #   ...
 
 # All threads with minimal depth for overview
-socorro-cli crash <crash-id> --all-threads --depth 2
+socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --all-threads --depth 2
 ```
 
 ### Output Formats
@@ -336,13 +339,13 @@ socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --full
 
 ```bash
 # Find recent crashes with specific signature
-socorro-cli search --signature "AudioDecoderInputTrack" --product Fenix --days 30
+socorro-cli search --signature "mozilla::gmp::GMPLoader::Load" --days 30
 
 # Output:
-# FOUND 803 crashes
+# FOUND 19785 crashes
 #
-# 5403b258-aab0-4a25-8c78-4e0070260210 | Fenix 147.0.1 | Android 36 | release | 20260210191108 | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
-# 5b7622f7-d5e6-4427-8ecb-be9f00260210 | Fenix 147.0.1 | Android 36 | release | 20260210191108 | mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
+# abc12345-aab0-4a25-8c78-4e0070260210 | Firefox 148.0 | Windows NT 10.0.26100 | release | 20260210191108 | mozilla::gmp::GMPLoader::Load
+# def67890-d5e6-4427-8ecb-be9f00260210 | Firefox 148.0 | Windows NT 10.0.19045 | release | 20260210191108 | mozilla::gmp::GMPLoader::Load
 # ...
 
 # Aggregate crashes by platform and version (only aggregations shown)
@@ -380,21 +383,21 @@ socorro-cli search --product Fenix --platform Android --days 3 --limit 20
 
 ```bash
 # Investigate a crash from triage
-socorro-cli crash <crash-id> --depth 15 --format markdown > crash-analysis.md
+socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --depth 15 --format markdown > crash-analysis.md
 
 # Quick signature search to find related crashes
-socorro-cli search --signature "MyFunction" --days 30 --limit 10
+socorro-cli search --signature "~SpinEventLoopUntil" --days 30 --limit 10
 
 # Check if a crash affects multiple versions
-socorro-cli search --signature "MyFunction" --facet version --days 30
+socorro-cli search --signature "OOM | small" --facet version --days 30
 
 # Deadlock investigation workflow
 # 1. Get crash with all threads
-socorro-cli crash <deadlock-crash-id> --all-threads --depth 10 > deadlock-stacks.txt
+socorro-cli crash b7c998c8-d033-4cc7-a1fe-ce4240260224 --all-threads --depth 10 > deadlock-stacks.txt
 # 2. Review all thread stacks to identify lock holders and waiters
 
 # Check crash distribution across platforms
-socorro-cli search --signature "MyFunction" --facet platform --days 7
+socorro-cli search --signature "OOM | small" --facet platform --days 7
 ```
 
 ## Data and Privacy

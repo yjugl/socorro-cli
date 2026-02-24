@@ -77,13 +77,13 @@ EXAMPLES:
     socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120
 
     # Show more stack frames
-    socorro-cli crash <crash-id> --depth 20
+    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --depth 20
 
     # Show all threads (useful for deadlock analysis)
-    socorro-cli crash <crash-id> --all-threads
+    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --all-threads
 
     # Get full JSON data
-    socorro-cli crash <crash-id> --full
+    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --full
 
 RATE LIMITS:
     --full and --format json skip the API token so the server strips protected
@@ -112,7 +112,7 @@ Use --facet to aggregate results by field (can be repeated).
 
 EXAMPLES:
     # Find crashes with a specific signature
-    socorro-cli search --signature \"mozilla::AudioDecoderInputTrack\"
+    socorro-cli search --signature \"OOM | small\"
 
     # Search Fenix crashes from last 14 days
     socorro-cli search --product Fenix --days 14
@@ -121,7 +121,7 @@ EXAMPLES:
     socorro-cli search --product Firefox --facet platform --facet version
 
     # Find Windows crashes for a specific version
-    socorro-cli search --product Firefox --platform Windows --version 120.0
+    socorro-cli search --product Firefox --platform Windows --version 147.0.4
 
     # Find crashes on ARM64 architecture
     socorro-cli search --product Firefox --cpu-arch arm64
@@ -159,9 +159,12 @@ TOP CRASHERS:
     individual crashes alongside the aggregations.
     --facets-size controls how many top signatures are returned (default: 50).
 
-SIGNATURE PATTERNS:
-    Exact match:  --signature \"OOM | small\"
+FILTER OPERATORS:
+    Exact match:  --signature \"OOM | small\" (default)
     Contains:     --signature \"~AudioDecoder\" (use ~ prefix)
+    The --signature, --proto-signature, --platform-version, and --process-type
+    flags support operator prefixes (~, $, ^, !, @, etc.).
+    See https://crash-stats.mozilla.org/documentation/supersearch/ for details.
 
 PROTO SIGNATURE:
     The proto signature is the raw, unsymbolicated crash signature before
@@ -251,7 +254,12 @@ EXAMPLES:
     socorro-cli crash-pings --facet process
 
     # Fetch symbolicated stack for a specific crash ping
-    socorro-cli crash-pings --stack <crashid> --date 2026-02-12
+    socorro-cli crash-pings --stack b343be53-8ec1-4849-98eb-ca6739a45645 --date 2026-02-23
+
+FILTERING:
+    Filters are matched client-side. Only exact match and ~ (contains) are
+    supported. The full Super Search operator prefixes (used in 'search')
+    do not apply here.
 
 FACET FIELDS:
     signature, channel, os, process, version, arch, osversion, build_id,

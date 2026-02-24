@@ -16,8 +16,8 @@ cargo build
 cargo build --release
 
 # Run locally without installing
-cargo run -- crash <crash-id>
-cargo run -- search --signature "SomeSignature"
+cargo run -- crash 247653e8-7a18-4836-97d1-42a720260120
+cargo run -- search --signature "OOM | small"
 cargo run -- correlations --signature "OOM | small"
 cargo run -- crash-pings --channel release --os Windows
 
@@ -25,8 +25,8 @@ cargo run -- crash-pings --channel release --os Windows
 cargo install --path .
 
 # Run with specific subcommand
-socorro-cli crash <crash-id>
-socorro-cli search --signature "term"
+socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120
+socorro-cli search --signature "OOM | small"
 
 # API token is managed via keychain or token file (see Authentication section)
 
