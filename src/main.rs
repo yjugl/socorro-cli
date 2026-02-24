@@ -25,6 +25,10 @@ EXAMPLES:
     # Search Firefox crashes from last 30 days, aggregate by version
     socorro-cli search --product Firefox --days 30 --facet version
 
+    # Search a specific date or date range
+    socorro-cli search --signature \"OOM | small\" --date 2026-02-20
+    socorro-cli search --signature \"OOM | small\" --from 2026-02-10 --to 2026-02-20
+
     # List top crash signatures by volume (like the Top Crashers web UI)
     socorro-cli search --facet signature
 
@@ -117,6 +121,12 @@ EXAMPLES:
     # Search Fenix crashes from last 14 days
     socorro-cli search --product Fenix --days 14
 
+    # Search a specific date
+    socorro-cli search --signature \"OOM | small\" --date 2026-02-20
+
+    # Search a date range
+    socorro-cli search --signature \"OOM | small\" --from 2026-02-10 --to 2026-02-20
+
     # Aggregate by platform and version
     socorro-cli search --product Firefox --facet platform --facet version
 
@@ -158,6 +168,14 @@ TOP CRASHERS:
     (only aggregated counts are shown). Use --limit 10 to also show
     individual crashes alongside the aggregations.
     --facets-size controls how many top signatures are returned (default: 50).
+
+DATE RANGES:
+    By default, searches the last 7 days. Use --days N for a different window,
+    --date for a single day, or --from/--to for an arbitrary range.
+    Both --from and --to are inclusive (--from 02-10 --to 02-12 includes all
+    three days). --from without --to defaults --to to today.
+    --date D is equivalent to --from D --to D.
+    These flags are mutually exclusive.
 
 FILTER OPERATORS:
     Exact match:  --signature \"OOM | small\" (default)
@@ -241,6 +259,12 @@ EXAMPLES:
     # Specify date
     socorro-cli crash-pings --date 2026-02-12
 
+    # Query a date range
+    socorro-cli crash-pings --from 2026-02-10 --to 2026-02-12
+
+    # Query the last 7 days
+    socorro-cli crash-pings --days 7
+
     # Filter by channel, OS, process type, version
     socorro-cli crash-pings --channel release --os Windows
     socorro-cli crash-pings --process main --version 147.0.3
@@ -255,6 +279,14 @@ EXAMPLES:
 
     # Fetch symbolicated stack for a specific crash ping
     socorro-cli crash-pings --stack b343be53-8ec1-4849-98eb-ca6739a45645 --date 2026-02-23
+
+DATE RANGES:
+    By default, crash-pings queries yesterday's data. Use --date for a specific
+    day, --days N for the last N days, or --from/--to for an arbitrary range.
+    Both --from and --to are inclusive (--from 02-10 --to 02-12 includes all
+    three days). --from without --to defaults to yesterday. Data for each date
+    is cached locally, so repeated queries are fast. Progress is shown on stderr
+    for multi-date queries.
 
 FILTERING:
     Filters are matched client-side. Only exact match and ~ (contains) are
@@ -356,8 +388,20 @@ EXAMPLES:
     #[command(long_about = CRASH_PINGS_ABOUT)]
     CrashPings {
         /// Date to query (YYYY-MM-DD), defaults to yesterday (UTC)
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["days", "from", "to"])]
         date: Option<String>,
+
+        /// Query the last N days (ending at yesterday)
+        #[arg(long, conflicts_with_all = ["date", "from", "to"])]
+        days: Option<u32>,
+
+        /// Start of date range, inclusive (YYYY-MM-DD)
+        #[arg(long, conflicts_with_all = ["date", "days"])]
+        from: Option<String>,
+
+        /// End of date range, inclusive (YYYY-MM-DD), defaults to yesterday if only --from given
+        #[arg(long, conflicts_with_all = ["date", "days"], requires = "from")]
+        to: Option<String>,
 
         /// Filter by release channel (release, beta, nightly)
         #[arg(long)]
@@ -392,7 +436,7 @@ EXAMPLES:
         limit: usize,
 
         /// Fetch symbolicated stack for a specific crash ping ID
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["days", "from", "to"])]
         stack: Option<String>,
     },
 
@@ -447,9 +491,21 @@ EXAMPLES:
         #[arg(long)]
         process_type: Option<String>,
 
+        /// Single date to search (YYYY-MM-DD)
+        #[arg(long, conflicts_with_all = ["days", "from", "to"])]
+        date: Option<String>,
+
         /// Search crashes from the last N days
-        #[arg(long, default_value = "7")]
-        days: u32,
+        #[arg(long, conflicts_with_all = ["date", "from", "to"])]
+        days: Option<u32>,
+
+        /// Start of date range, inclusive (YYYY-MM-DD)
+        #[arg(long, conflicts_with_all = ["date", "days"])]
+        from: Option<String>,
+
+        /// End of date range, inclusive (YYYY-MM-DD), defaults to today if only --from given
+        #[arg(long, conflicts_with_all = ["date", "days"], requires = "from")]
+        to: Option<String>,
 
         /// Maximum number of individual crash results to return (default: 10, or 0 when --facet is used)
         #[arg(long)]
@@ -502,6 +558,9 @@ fn run() -> Result<()> {
         },
         Commands::CrashPings {
             date,
+            days,
+            from,
+            to,
             channel,
             os,
             process,
@@ -512,10 +571,32 @@ fn run() -> Result<()> {
             limit,
             stack,
         } => {
-            let date = date.unwrap_or_else(|| {
-                let yesterday = chrono::Utc::now() - chrono::Duration::days(1);
-                yesterday.format("%Y-%m-%d").to_string()
-            });
+            let yesterday = || {
+                let y = chrono::Utc::now() - chrono::Duration::days(1);
+                y.format("%Y-%m-%d").to_string()
+            };
+            let (date_from, date_to) = if let Some(d) = date {
+                (d.clone(), d)
+            } else if let Some(n) = days {
+                let end = chrono::Utc::now() - chrono::Duration::days(1);
+                let start = end - chrono::Duration::days(n as i64 - 1);
+                (
+                    start.format("%Y-%m-%d").to_string(),
+                    end.format("%Y-%m-%d").to_string(),
+                )
+            } else if let Some(f) = from {
+                let t = to.unwrap_or_else(yesterday);
+                if f > t {
+                    return Err(socorro_cli::Error::ParseError(format!(
+                        "--from date ({}) is after --to date ({})",
+                        f, t
+                    )));
+                }
+                (f, t)
+            } else {
+                let y = yesterday();
+                (y.clone(), y)
+            };
             let filters = socorro_cli::models::crash_pings::CrashPingFilters {
                 channel,
                 os,
@@ -525,7 +606,8 @@ fn run() -> Result<()> {
                 arch,
             };
             socorro_cli::commands::crash_pings::execute(
-                &date,
+                &date_from,
+                &date_to,
                 filters,
                 &facet,
                 limit,
@@ -562,12 +644,34 @@ fn run() -> Result<()> {
             channel,
             platform_version,
             process_type,
+            date,
             days,
+            from,
+            to,
             limit,
             facet,
             facets_size,
             sort,
         } => {
+            let today = || chrono::Utc::now().format("%Y-%m-%d").to_string();
+            let (date_from, date_to) = if let Some(d) = date {
+                (d.clone(), Some(d))
+            } else if let Some(n) = days {
+                let start = chrono::Utc::now() - chrono::Duration::days(n as i64);
+                (start.format("%Y-%m-%d").to_string(), None)
+            } else if let Some(f) = from {
+                let t = to.unwrap_or_else(today);
+                if f > t {
+                    return Err(socorro_cli::Error::ParseError(format!(
+                        "--from date ({}) is after --to date ({})",
+                        f, t
+                    )));
+                }
+                (f, Some(t))
+            } else {
+                let start = chrono::Utc::now() - chrono::Duration::days(7);
+                (start.format("%Y-%m-%d").to_string(), None)
+            };
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             let limit = limit.unwrap_or(if facet.is_empty() { 10 } else { 0 });
             let params = socorro_cli::models::SearchParams {
@@ -580,7 +684,8 @@ fn run() -> Result<()> {
                 release_channel: channel,
                 platform_version,
                 process_type,
-                days,
+                date_from,
+                date_to,
                 limit,
                 facets: facet,
                 facets_size,

@@ -414,12 +414,17 @@ pub fn format_correlations(summary: &CorrelationsSummary) -> String {
 pub fn format_crash_pings(summary: &CrashPingsSummary) -> String {
     let mut output = String::new();
 
+    let date_str = if summary.date_from == summary.date_to {
+        summary.date_from.clone()
+    } else {
+        format!("{}..{}", summary.date_from, summary.date_to)
+    };
     let filter_str = if let Some(ref sig) = summary.signature_filter {
         format!(": \"{}\" ({} pings)", sig, summary.filtered_total)
     } else {
         format!(" ({} pings, sampled)", summary.total)
     };
-    output.push_str(&format!("CRASH PINGS {}{}\n\n", summary.date, filter_str));
+    output.push_str(&format!("CRASH PINGS {}{}\n\n", date_str, filter_str));
 
     if summary.facet_name != "signature" || summary.signature_filter.is_some() {
         output.push_str(&format!("{}:\n", summary.facet_name));

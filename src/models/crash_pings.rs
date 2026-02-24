@@ -180,7 +180,8 @@ pub struct CrashPingFilters {
 
 #[derive(Debug, Serialize)]
 pub struct CrashPingsSummary {
-    pub date: String,
+    pub date_from: String,
+    pub date_to: String,
     pub total: usize,
     pub filtered_total: usize,
     pub signature_filter: Option<String>,
@@ -475,7 +476,8 @@ mod tests {
     #[test]
     fn test_crash_pings_summary() {
         let summary = CrashPingsSummary {
-            date: "2026-02-12".to_string(),
+            date_from: "2026-02-12".to_string(),
+            date_to: "2026-02-12".to_string(),
             total: 88808,
             filtered_total: 4523,
             signature_filter: Some("OOM | small".to_string()),

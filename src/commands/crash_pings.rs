@@ -3,7 +3,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use std::collections::HashMap;
+use std::io::Write;
 
+use chrono::NaiveDate;
 use reqwest::StatusCode;
 
 use crate::cache;
@@ -78,23 +80,40 @@ fn fetch_stack(
     }
 }
 
+fn date_range(from: &str, to: &str) -> Vec<String> {
+    let start = NaiveDate::parse_from_str(from, "%Y-%m-%d").expect("invalid start date");
+    let end = NaiveDate::parse_from_str(to, "%Y-%m-%d").expect("invalid end date");
+    let mut dates = Vec::new();
+    let mut current = start;
+    while current <= end {
+        dates.push(current.format("%Y-%m-%d").to_string());
+        current += chrono::Duration::days(1);
+    }
+    dates
+}
+
 fn aggregate(
-    response: &CrashPingsResponse,
+    responses: &[&CrashPingsResponse],
     filters: &CrashPingFilters,
     facet: &str,
     limit: usize,
-    date: &str,
+    date_from: &str,
+    date_to: &str,
 ) -> CrashPingsSummary {
     let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut total = 0usize;
     let mut filtered_total = 0usize;
 
-    for i in 0..response.len() {
-        if !response.matches_filters(i, filters) {
-            continue;
+    for response in responses {
+        total += response.len();
+        for i in 0..response.len() {
+            if !response.matches_filters(i, filters) {
+                continue;
+            }
+            filtered_total += 1;
+            let value = response.facet_value(i, facet);
+            *counts.entry(value).or_insert(0) += 1;
         }
-        filtered_total += 1;
-        let value = response.facet_value(i, facet);
-        *counts.entry(value).or_insert(0) += 1;
     }
 
     let mut items: Vec<(String, usize)> = counts.into_iter().collect();
@@ -118,8 +137,9 @@ fn aggregate(
         .collect();
 
     CrashPingsSummary {
-        date: date.to_string(),
-        total: response.len(),
+        date_from: date_from.to_string(),
+        date_to: date_to.to_string(),
+        total,
         filtered_total,
         signature_filter: filters.signature.clone(),
         facet_name: facet.to_string(),
@@ -128,7 +148,8 @@ fn aggregate(
 }
 
 pub fn execute(
-    date: &str,
+    date_from: &str,
+    date_to: &str,
     filters: CrashPingFilters,
     facet: &str,
     limit: usize,
@@ -159,12 +180,12 @@ pub fn execute(
     }
 
     if let Some(crash_id) = stack_id {
-        // Stack mode
-        let resp = fetch_stack(&client, date, crash_id)?;
+        // Stack mode (date_from == date_to since --stack conflicts with range args)
+        let resp = fetch_stack(&client, date_from, crash_id)?;
         let frames = resp.stack.unwrap_or_default();
         let summary = CrashPingStackSummary {
             crash_id: crash_id.to_string(),
-            date: date.to_string(),
+            date: date_from.to_string(),
             frames,
             java_exception: resp.java_exception,
         };
@@ -176,8 +197,33 @@ pub fn execute(
         print!("{}", output);
     } else {
         // Aggregate mode
-        let response = fetch_ping_data(&client, date)?;
-        let summary = aggregate(&response, &filters, facet, limit, date);
+        let dates = date_range(date_from, date_to);
+        let multi_date = dates.len() > 1;
+        let mut responses = Vec::new();
+
+        for (idx, date) in dates.iter().enumerate() {
+            if multi_date {
+                eprint!("\rFetching crash pings: {}/{}...", idx + 1, dates.len());
+                std::io::stderr().flush().ok();
+            }
+            match fetch_ping_data(&client, date) {
+                Ok(resp) => responses.push(resp),
+                Err(Error::NotFound(_)) | Err(Error::ParseError(_)) => {
+                    // 404 or 202 — skip with warning
+                    eprintln!("\rWarning: no data for {}, skipping.          ", date);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        if multi_date {
+            // Clear the progress line
+            eprint!("\r                                              \r");
+            std::io::stderr().flush().ok();
+        }
+
+        let response_refs: Vec<&CrashPingsResponse> = responses.iter().collect();
+        let summary = aggregate(&response_refs, &filters, facet, limit, date_from, date_to);
         let output = match format {
             OutputFormat::Compact => compact::format_crash_pings(&summary),
             OutputFormat::Json => json::format_crash_pings(&summary)?,
@@ -282,7 +328,14 @@ mod tests {
     fn test_aggregate_by_signature() {
         let resp = make_test_response();
         let filters = CrashPingFilters::default();
-        let summary = aggregate(&resp, &filters, "signature", 10, "2026-02-12");
+        let summary = aggregate(
+            &[&resp],
+            &filters,
+            "signature",
+            10,
+            "2026-02-12",
+            "2026-02-12",
+        );
         assert_eq!(summary.total, 5);
         assert_eq!(summary.filtered_total, 5);
         assert_eq!(summary.items.len(), 2);
@@ -299,7 +352,14 @@ mod tests {
             os: Some("Windows".to_string()),
             ..Default::default()
         };
-        let summary = aggregate(&resp, &filters, "signature", 10, "2026-02-12");
+        let summary = aggregate(
+            &[&resp],
+            &filters,
+            "signature",
+            10,
+            "2026-02-12",
+            "2026-02-12",
+        );
         assert_eq!(summary.filtered_total, 3);
     }
 
@@ -307,7 +367,7 @@ mod tests {
     fn test_aggregate_by_os() {
         let resp = make_test_response();
         let filters = CrashPingFilters::default();
-        let summary = aggregate(&resp, &filters, "os", 10, "2026-02-12");
+        let summary = aggregate(&[&resp], &filters, "os", 10, "2026-02-12", "2026-02-12");
         assert_eq!(summary.items.len(), 2);
         assert_eq!(summary.items[0].label, "Windows");
         assert_eq!(summary.items[0].count, 3);
@@ -319,7 +379,14 @@ mod tests {
     fn test_aggregate_limit() {
         let resp = make_test_response();
         let filters = CrashPingFilters::default();
-        let summary = aggregate(&resp, &filters, "signature", 1, "2026-02-12");
+        let summary = aggregate(
+            &[&resp],
+            &filters,
+            "signature",
+            1,
+            "2026-02-12",
+            "2026-02-12",
+        );
         assert_eq!(summary.items.len(), 1);
         assert_eq!(summary.items[0].label, "OOM | small");
     }
@@ -328,9 +395,54 @@ mod tests {
     fn test_aggregate_percentages() {
         let resp = make_test_response();
         let filters = CrashPingFilters::default();
-        let summary = aggregate(&resp, &filters, "signature", 10, "2026-02-12");
+        let summary = aggregate(
+            &[&resp],
+            &filters,
+            "signature",
+            10,
+            "2026-02-12",
+            "2026-02-12",
+        );
         assert!((summary.items[0].percentage - 60.0).abs() < 0.01);
         assert!((summary.items[1].percentage - 40.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_aggregate_multi_response() {
+        let resp1 = make_test_response();
+        let resp2 = make_test_response();
+        let filters = CrashPingFilters::default();
+        let summary = aggregate(
+            &[&resp1, &resp2],
+            &filters,
+            "signature",
+            10,
+            "2026-02-12",
+            "2026-02-13",
+        );
+        assert_eq!(summary.total, 10);
+        assert_eq!(summary.filtered_total, 10);
+        assert_eq!(summary.items[0].label, "OOM | small");
+        assert_eq!(summary.items[0].count, 6);
+        assert_eq!(summary.items[1].label, "setup_stack_prot");
+        assert_eq!(summary.items[1].count, 4);
+        assert_eq!(summary.date_from, "2026-02-12");
+        assert_eq!(summary.date_to, "2026-02-13");
+    }
+
+    #[test]
+    fn test_date_range() {
+        let dates = date_range("2026-02-10", "2026-02-13");
+        assert_eq!(
+            dates,
+            vec!["2026-02-10", "2026-02-11", "2026-02-12", "2026-02-13"]
+        );
+    }
+
+    #[test]
+    fn test_date_range_single_day() {
+        let dates = date_range("2026-02-10", "2026-02-10");
+        assert_eq!(dates, vec!["2026-02-10"]);
     }
 
     #[test]

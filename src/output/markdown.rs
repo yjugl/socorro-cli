@@ -182,7 +182,14 @@ pub fn format_crash_pings(summary: &CrashPingsSummary) -> String {
     let mut output = String::new();
 
     output.push_str("# Crash Pings\n\n");
-    output.push_str(&format!("**Date:** {}\n\n", summary.date));
+    if summary.date_from == summary.date_to {
+        output.push_str(&format!("**Date:** {}\n\n", summary.date_from));
+    } else {
+        output.push_str(&format!(
+            "**Date:** {} to {}\n\n",
+            summary.date_from, summary.date_to
+        ));
+    }
 
     if let Some(ref sig) = summary.signature_filter {
         output.push_str(&format!(

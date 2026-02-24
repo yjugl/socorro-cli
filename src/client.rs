@@ -144,8 +144,12 @@ impl SocorroClient {
             query_params.push(("_columns", col.to_string()));
         }
 
-        let days_ago = chrono::Utc::now() - chrono::Duration::days(params.days as i64);
-        query_params.push(("date", format!(">={}", days_ago.format("%Y-%m-%d"))));
+        query_params.push(("date", format!(">={}", params.date_from)));
+        if let Some(ref to) = params.date_to {
+            let end = chrono::NaiveDate::parse_from_str(to, "%Y-%m-%d").unwrap()
+                + chrono::Duration::days(1);
+            query_params.push(("date", format!("<{}", end.format("%Y-%m-%d"))));
+        }
 
         if let Some(sig) = params.signature {
             push_filter(&mut query_params, "signature", sig);
