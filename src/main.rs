@@ -151,6 +151,10 @@ EXAMPLES:
     # Filter to a specific Windows build
     socorro-cli search --signature \"OOM | small\" --platform-version \"~10.0.26100\"
 
+NOTE: The crash-pings command uses a different data source with different flag
+    names and values. Do not assume the same flags or values work across both
+    commands — check 'socorro-cli crash-pings --help'.
+
 TOP CRASHERS:
     To list the top crash signatures by volume (like the Socorro web UI's
     Top Crashers page), use --facet signature:
@@ -208,8 +212,7 @@ RELEASE CHANNELS:
 
 PROCESS TYPES:
     parent, content, gpu, rdd, utility, socket, gmplugin, plugin
-    NOTE: \"parent\" is the main/browser process. In crash pings, this is
-    called \"main\" instead.
+    NOTE: \"parent\" is the main/browser process.
 
 PLATFORM VERSIONS:
     Values are OS version strings from the crash report, e.g.:
@@ -279,6 +282,10 @@ EXAMPLES:
 
     # Fetch symbolicated stack for a specific crash ping
     socorro-cli crash-pings --stack b343be53-8ec1-4849-98eb-ca6739a45645 --date 2026-02-23
+
+NOTE: The search command uses a different data source with different flag
+    names and values. Do not assume the same flags or values work across both
+    commands — check 'socorro-cli search --help'.
 
 DATE RANGES:
     By default, crash-pings queries yesterday's data. Use --date for a specific

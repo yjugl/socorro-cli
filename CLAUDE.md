@@ -139,6 +139,10 @@ With `--all-threads`, it formats all threads (marking the crashing one), useful 
 - `InvalidCrashId` — crash ID contains invalid characters (injection protection)
 - `Keyring` — keychain/credential storage errors
 
+### Field Naming Differences: `search` vs `crash-pings`
+
+The `search` and `crash-pings` commands query different data sources (Socorro API vs crash-pings.mozilla.org) that use different naming conventions. **Flag names, accepted values, and facet field names differ between the two commands.** The CLI uses each source's native vocabulary so that filter values match what appears in output. Always check the `--help` for the specific command being used — do not assume flags or values are interchangeable.
+
 ## Socorro API Details
 
 **Base URL**: `https://crash-stats.mozilla.org/api`
