@@ -12,3 +12,10 @@ pub use common::*;
 pub use correlations::*;
 pub use processed_crash::{CrashInfo, CrashSummary, ProcessedCrash, Thread, ThreadSummary};
 pub use search::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ModulesMode {
+    None,
+    Stack,
+    Full,
+}

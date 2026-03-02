@@ -4,7 +4,8 @@
 
 use crate::commands::crash_pings::format_frame_location;
 use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
-use crate::models::{CorrelationsSummary, CrashSummary, SearchResponse, StackFrame};
+use crate::models::{CorrelationsSummary, CrashSummary, ModulesMode, SearchResponse, StackFrame};
+use std::collections::HashSet;
 
 fn format_function(frame: &StackFrame) -> String {
     if let Some(func) = &frame.function {
@@ -25,7 +26,7 @@ fn format_function(frame: &StackFrame) -> String {
     }
 }
 
-pub fn format_crash(summary: &CrashSummary) -> String {
+pub fn format_crash(summary: &CrashSummary, modules_mode: ModulesMode) -> String {
     let mut output = String::new();
 
     output.push_str("# Crash Report\n\n");
@@ -126,7 +127,63 @@ pub fn format_crash(summary: &CrashSummary) -> String {
         output.push_str("```\n");
     }
 
+    output.push_str(&format_modules(summary, modules_mode));
+
     output
+}
+
+fn format_modules(summary: &CrashSummary, mode: ModulesMode) -> String {
+    if mode == ModulesMode::None || summary.modules.is_empty() {
+        return String::new();
+    }
+
+    let modules: Vec<_> = match mode {
+        ModulesMode::Stack => {
+            let mut module_names: HashSet<&str> = HashSet::new();
+            if !summary.all_threads.is_empty() {
+                for thread in &summary.all_threads {
+                    for frame in &thread.frames {
+                        if let Some(m) = &frame.module {
+                            module_names.insert(m);
+                        }
+                    }
+                }
+            } else {
+                for frame in &summary.frames {
+                    if let Some(m) = &frame.module {
+                        module_names.insert(m);
+                    }
+                }
+            }
+            summary
+                .modules
+                .iter()
+                .filter(|m| module_names.contains(m.filename.as_str()))
+                .collect()
+        }
+        ModulesMode::Full => summary.modules.iter().collect(),
+        ModulesMode::None => unreachable!(),
+    };
+
+    if modules.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    out.push_str("\n## Modules\n\n");
+    out.push_str("| Module | Version | Debug File | Debug ID | Code ID |\n");
+    out.push_str("|--------|---------|------------|----------|--------|\n");
+    for m in &modules {
+        let version = m.version.as_deref().unwrap_or("?");
+        let debug_file = m.debug_file.as_deref().unwrap_or("?");
+        let debug_id = m.debug_id.as_deref().unwrap_or("?");
+        let code_id = m.code_id.as_deref().unwrap_or("?");
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            m.filename, version, debug_file, debug_id, code_id
+        ));
+    }
+    out
 }
 
 pub fn format_search(response: &SearchResponse) -> String {
@@ -286,7 +343,9 @@ pub fn format_correlations(summary: &CorrelationsSummary) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{CrashHit, CrashSummary, FacetBucket, ThreadSummary};
+    use crate::models::{
+        CrashHit, CrashSummary, FacetBucket, ModuleInfo, ModulesMode, ThreadSummary,
+    };
     use std::collections::HashMap;
 
     fn sample_crash_summary() -> CrashSummary {
@@ -314,13 +373,75 @@ mod tests {
                 offset: None,
             }],
             all_threads: vec![],
+            modules: vec![],
+        }
+    }
+
+    fn sample_crash_summary_with_modules() -> CrashSummary {
+        CrashSummary {
+            crash_id: "test-modules".to_string(),
+            signature: "TestSig".to_string(),
+            reason: None,
+            address: None,
+            moz_crash_reason: None,
+            abort_message: None,
+            product: "Firefox".to_string(),
+            version: "148.0".to_string(),
+            build_id: None,
+            release_channel: None,
+            platform: "Windows".to_string(),
+            android_version: None,
+            android_model: None,
+            crashing_thread_name: Some("main".to_string()),
+            frames: vec![
+                StackFrame {
+                    frame: 0,
+                    function: Some("func_a".to_string()),
+                    file: None,
+                    line: None,
+                    module: Some("xul.dll".to_string()),
+                    offset: None,
+                },
+                StackFrame {
+                    frame: 1,
+                    function: Some("func_b".to_string()),
+                    file: None,
+                    line: None,
+                    module: Some("ntdll.dll".to_string()),
+                    offset: None,
+                },
+            ],
+            all_threads: vec![],
+            modules: vec![
+                ModuleInfo {
+                    filename: "xul.dll".to_string(),
+                    debug_file: Some("xul.pdb".to_string()),
+                    debug_id: Some("F51BCD2A".to_string()),
+                    code_id: Some("69934c4b".to_string()),
+                    version: Some("148.0.0.3".to_string()),
+                },
+                ModuleInfo {
+                    filename: "ntdll.dll".to_string(),
+                    debug_file: Some("ntdll.pdb".to_string()),
+                    debug_id: Some("180BF1B9".to_string()),
+                    code_id: Some("7ec9c15d".to_string()),
+                    version: Some("6.2.19041.6456".to_string()),
+                },
+                ModuleInfo {
+                    filename: "mozglue.dll".to_string(),
+                    debug_file: Some("mozglue.pdb".to_string()),
+                    debug_id: Some("AABBCCDD".to_string()),
+                    code_id: Some("abc123".to_string()),
+                    version: Some("148.0".to_string()),
+                },
+            ],
         }
     }
 
     #[test]
     fn test_format_crash_markdown_header() {
         let summary = sample_crash_summary();
-        let output = format_crash(&summary);
+        let output = format_crash(&summary, ModulesMode::None);
 
         assert!(output.contains("# Crash Report"));
         assert!(output.contains("**Crash ID:** `247653e8-7a18-4836-97d1-42a720260120`"));
@@ -331,7 +452,7 @@ mod tests {
     #[test]
     fn test_format_crash_markdown_details() {
         let summary = sample_crash_summary();
-        let output = format_crash(&summary);
+        let output = format_crash(&summary, ModulesMode::None);
 
         assert!(output.contains("## Details"));
         assert!(output.contains("- **Crash Reason:** SIGSEGV at `0x0` (null pointer)"));
@@ -342,7 +463,7 @@ mod tests {
     #[test]
     fn test_format_crash_markdown_product_info() {
         let summary = sample_crash_summary();
-        let output = format_crash(&summary);
+        let output = format_crash(&summary, ModulesMode::None);
 
         assert!(output.contains("- **Product:** Fenix 147.0.1"));
         assert!(output.contains("- **Platform:** Android 36 on SM-S918B (Android 36)"));
@@ -351,7 +472,7 @@ mod tests {
     #[test]
     fn test_format_crash_markdown_stack_trace() {
         let summary = sample_crash_summary();
-        let output = format_crash(&summary);
+        let output = format_crash(&summary, ModulesMode::None);
 
         assert!(output.contains("## Stack Trace (GraphRunner)"));
         assert!(output.contains("```"));
@@ -375,11 +496,43 @@ mod tests {
                 is_crashing: true,
             },
         ];
-        let output = format_crash(&summary);
+        let output = format_crash(&summary, ModulesMode::None);
 
         assert!(output.contains("## All Threads"));
         assert!(output.contains("### Thread 0 (MainThread)"));
         assert!(output.contains("### Thread 1 (GraphRunner) **[CRASHING]**"));
+    }
+
+    #[test]
+    fn test_format_crash_markdown_modules_none() {
+        let summary = sample_crash_summary_with_modules();
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert!(!output.contains("## Modules"));
+    }
+
+    #[test]
+    fn test_format_crash_markdown_modules_stack() {
+        let summary = sample_crash_summary_with_modules();
+        let output = format_crash(&summary, ModulesMode::Stack);
+
+        assert!(output.contains("## Modules"));
+        assert!(output.contains("| Module | Version | Debug File | Debug ID | Code ID |"));
+        assert!(output.contains("| xul.dll | 148.0.0.3 | xul.pdb | F51BCD2A | 69934c4b |"));
+        assert!(output.contains("| ntdll.dll | 6.2.19041.6456 | ntdll.pdb | 180BF1B9 | 7ec9c15d |"));
+        // mozglue.dll not in stack frames
+        assert!(!output.contains("mozglue.dll"));
+    }
+
+    #[test]
+    fn test_format_crash_markdown_modules_full() {
+        let summary = sample_crash_summary_with_modules();
+        let output = format_crash(&summary, ModulesMode::Full);
+
+        assert!(output.contains("## Modules"));
+        assert!(output.contains("| xul.dll | 148.0.0.3 | xul.pdb | F51BCD2A | 69934c4b |"));
+        assert!(output.contains("| ntdll.dll | 6.2.19041.6456 | ntdll.pdb | 180BF1B9 | 7ec9c15d |"));
+        assert!(output.contains("| mozglue.dll | 148.0 | mozglue.pdb | AABBCCDD | abc123 |"));
     }
 
     #[test]

@@ -3,7 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use clap::{Parser, Subcommand};
-use socorro_cli::{OutputFormat, Result, SocorroClient};
+use socorro_cli::{ModulesMode, OutputFormat, Result, SocorroClient};
 
 const LONG_ABOUT: &str = "\
 Query Mozilla's Socorro crash reporting system (https://crash-stats.mozilla.org).
@@ -77,7 +77,7 @@ The crash ID can be:
   - A full Socorro URL: https://crash-stats.mozilla.org/report/index/247653e8-...
 
 EXAMPLES:
-    # Basic crash lookup (compact output)
+    # Basic crash lookup (compact output, includes modules from stack)
     socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120
 
     # Show more stack frames
@@ -86,8 +86,24 @@ EXAMPLES:
     # Show all threads (useful for deadlock analysis)
     socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --all-threads
 
+    # Hide modules section
+    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --modules none
+
+    # Show all loaded modules (for compatibility/environment analysis)
+    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --modules full
+
     # Get full JSON data
     socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --full
+
+MODULES:
+    --modules controls which loaded modules are listed in the output.
+    Default is 'stack' which lists modules referenced by the displayed stack
+    frames, with debug info (debug_file, debug_id, code_id, version). This
+    provides exactly what 'symdis disasm' needs for disassembly.
+    Use 'full' to list ALL loaded modules (can be 38-481 depending on platform).
+    Use 'none' to omit the modules section entirely.
+    --modules only applies to compact and markdown output; --full already
+    dumps everything as raw JSON.
 
 RATE LIMITS:
     --full and --format json skip the API token so the server strips protected
@@ -106,7 +122,8 @@ OUTPUT FIELDS:
     product     - Product name and version (Firefox 120.0, Fenix 147.0.1, etc.)
     build       - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
     channel     - Release channel (release, beta, nightly, esr, aurora, default)
-    stack       - Stack trace of the crashing thread";
+    stack       - Stack trace of the crashing thread
+    modules     - Loaded modules with debug info (controlled by --modules)";
 
 const SEARCH_ABOUT: &str = "\
 Search and aggregate crashes from Socorro.
@@ -389,6 +406,10 @@ EXAMPLES:
         /// Show stacks from all threads, not just the crashing thread (useful for diagnosing deadlocks)
         #[arg(long)]
         all_threads: bool,
+
+        /// Which modules to list: none, stack (modules in displayed frames), or full (all loaded modules)
+        #[arg(long, value_enum, default_value = "stack")]
+        modules: ModulesMode,
     },
 
     /// Query Firefox crash pings (opt-out telemetry, representative sample)
@@ -630,6 +651,7 @@ fn run() -> Result<()> {
             depth,
             full,
             all_threads,
+            modules,
         } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             socorro_cli::commands::crash::execute(
@@ -638,6 +660,7 @@ fn run() -> Result<()> {
                 depth,
                 full,
                 all_threads,
+                modules,
                 cli.format,
             )?;
         }

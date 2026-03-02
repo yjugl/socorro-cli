@@ -17,6 +17,8 @@ cargo build --release
 
 # Run locally without installing
 cargo run -- crash 247653e8-7a18-4836-97d1-42a720260120
+cargo run -- crash 247653e8-7a18-4836-97d1-42a720260120 --modules none
+cargo run -- crash 247653e8-7a18-4836-97d1-42a720260120 --modules full
 cargo run -- search --signature "OOM | small"
 cargo run -- search --signature "OOM | small" --date 2026-02-20
 cargo run -- search --signature "OOM | small" --from 2026-02-10 --to 2026-02-20
@@ -77,7 +79,7 @@ followed by a blank line before any code. Do not omit this header from any new f
   - Automatically retrieves auth token from keychain via `get_auth_header()`
 - **src/commands/**: Command implementations
   - **auth.rs**: Handles `auth login/logout/status` subcommands
-  - **crash.rs**: Handles crash fetching and output formatting
+  - **crash.rs**: Handles crash fetching and output formatting (accepts `ModulesMode` for `--modules` flag)
   - **search.rs**: Handles crash search and aggregation
   - **correlations.rs**: Fetches correlation data from CDN (not Socorro API), computes signature hash, handles CDN HTTP requests
   - **crash_pings.rs**: Fetches crash ping data from crash-pings.mozilla.org, client-side filtering/aggregation, stack trace fetching
@@ -86,11 +88,11 @@ followed by a blank line before any code. Do not omit this header from any new f
   - `read_cached()`: Read cached data by key
   - `write_cache()`: Write data to cache by key
 - **src/models/**: Data structures for Socorro API responses
-  - **processed_crash.rs**: `ProcessedCrash`, `Thread`, `CrashSummary` - crash data models
+  - **processed_crash.rs**: `ProcessedCrash`, `Thread`, `CrashSummary` - crash data models. `CrashSummary` includes `modules: Vec<ModuleInfo>` extracted from `json_dump.modules`
   - **search.rs**: `SearchResponse`, `SearchParams`, `CrashHit`, `FacetBucket` - search data models. `SearchParams` includes filters: signature, proto_signature, product, version, platform, cpu_arch, release_channel, platform_version, process_type, date_from, date_to, limit, facets, facets_size, sort. `CrashHit` includes build_id, release_channel, and platform_version fields
   - **correlations.rs**: `CorrelationsTotals`, `CorrelationsResponse`, `CorrelationsSummary` - correlation data models
   - **crash_pings.rs**: `CrashPingsResponse`, `CrashPingStackResponse`, `CrashPingsSummary` - crash ping data models (struct-of-arrays with string deduplication). `CrashPingsSummary` uses `date_from`/`date_to` fields for date range support
-  - **common.rs**: Shared types like `StackFrame`
+  - **common.rs**: Shared types like `StackFrame` and `ModuleInfo`
 - **src/output/**: Output formatters
   - **compact.rs**: Token-optimized plain text (default, LLM-friendly)
   - **json.rs**: Full JSON output
@@ -101,7 +103,7 @@ followed by a blank line before any code. Do not omit this header from any new f
 1. CLI parses arguments → creates `SocorroClient` (token retrieved automatically from keychain/file)
 2. Command dispatcher calls appropriate command module
 3. Command module:
-   - For crash: extracts crash ID from URL if needed → `client.get_crash()` → converts `ProcessedCrash` to `CrashSummary` → formats output
+   - For crash: extracts crash ID from URL if needed → `client.get_crash()` → converts `ProcessedCrash` to `CrashSummary` (including modules from `json_dump.modules`) → formats output with `--modules` mode (none/stack/full)
    - For search: resolves date params (`--date`, `--days`, `--from`/`--to`) into `date_from`/`date_to` → builds `SearchParams` → `client.search()` → formats `SearchResponse`
    - For correlations: builds reqwest client with gzip → fetches totals + per-signature data from CDN → converts `CorrelationsResponse` to `CorrelationsSummary` → formats output
    - For crash-pings: resolves date params (`--date`, `--days`, `--from`/`--to`) into a date range → builds reqwest client with gzip → fetches each day's ping data from crash-pings.mozilla.org (cached locally, skips 404/202 with warning) → aggregates across all dates → formats `CrashPingsSummary`; or fetches individual stack trace → formats `CrashPingStackSummary`
@@ -166,15 +168,15 @@ Run tests with:
 cargo test
 ```
 
-The test suite (113 tests) covers:
+The test suite (125 tests) covers:
 - **Crash ID extraction**: Bare IDs, full URLs, URLs with trailing slashes
-- **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode
+- **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode, module extraction from `json_dump.modules`
 - **Search models**: SearchResponse/CrashHit deserialization, facets parsing
 - **Correlations models**: Deserialization, `to_summary()` percentage calculations, `format_item_map()` for item display
 - **Crash pings models**: IndexedStrings/NullableIndexedStrings deserialization, accessor methods, filter matching (channel, OS, process, version, signature exact/contains, arch, combined), facet value resolution, stack response deserialization
 - **Crash pings command**: Aggregation by signature/OS, filtering, limit, percentage calculations, frame formatting, multi-response aggregation, date range generation
 - **Cache module**: Cache directory creation, read/write roundtrip, empty cache handling
-- **Output formatters**: Compact and Markdown formatters for crash, search, correlations, and crash pings output
+- **Output formatters**: Compact and Markdown formatters for crash (including `--modules` none/stack/full modes), search, correlations, and crash pings output
 - **Client validation**: Crash ID format validation (rejects invalid characters, potential injection attempts)
 - **Auth token file**: Reading from `SOCORRO_API_TOKEN_PATH`, whitespace handling, missing file handling
 

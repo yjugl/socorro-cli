@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::{common::deserialize_string_or_number, StackFrame};
+use super::{common::deserialize_string_or_number, ModuleInfo, StackFrame};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -87,6 +87,7 @@ pub struct CrashSummary {
     pub crashing_thread_name: Option<String>,
     pub frames: Vec<StackFrame>,
     pub all_threads: Vec<ThreadSummary>,
+    pub modules: Vec<ModuleInfo>,
 }
 
 impl ProcessedCrash {
@@ -141,6 +142,13 @@ impl ProcessedCrash {
             (None, Vec::new(), Vec::new())
         };
 
+        let modules: Vec<ModuleInfo> = self
+            .json_dump
+            .as_ref()
+            .and_then(|jd| jd.get("modules"))
+            .and_then(|m| serde_json::from_value(m.clone()).ok())
+            .unwrap_or_default();
+
         let json_dump_crash_info: Option<CrashInfo> = self
             .json_dump
             .as_ref()
@@ -182,6 +190,7 @@ impl ProcessedCrash {
             crashing_thread_name: thread_name,
             frames,
             all_threads: thread_summaries,
+            modules,
         }
     }
 }
@@ -205,20 +214,45 @@ mod tests {
                 "address": "0x0",
                 "crashing_thread": 1
             },
+            "json_dump": {
+                "modules": [
+                    {
+                        "filename": "xul.dll",
+                        "debug_file": "xul.pdb",
+                        "debug_id": "F51BCD2A59EB2A194C4C44205044422E1",
+                        "code_id": "69934c4ba31f000",
+                        "version": "148.0.0.3"
+                    },
+                    {
+                        "filename": "ntdll.dll",
+                        "debug_file": "ntdll.pdb",
+                        "debug_id": "180BF1B90AA75697D0EFEA5E5630AC7E1",
+                        "code_id": "7ec9c15d1f8000",
+                        "version": "6.2.19041.6456"
+                    },
+                    {
+                        "filename": "mozglue.dll",
+                        "debug_file": "mozglue.pdb",
+                        "debug_id": "AABBCCDD11223344",
+                        "code_id": "abc123",
+                        "version": "148.0"
+                    }
+                ]
+            },
             "threads": [
                 {
                     "thread": 0,
                     "thread_name": "MainThread",
                     "frames": [
-                        {"frame": 0, "function": "main", "file": "main.cpp", "line": 10}
+                        {"frame": 0, "function": "main", "file": "main.cpp", "line": 10, "module": "xul.dll"}
                     ]
                 },
                 {
                     "thread": 1,
                     "thread_name": "GraphRunner",
                     "frames": [
-                        {"frame": 0, "function": "EnsureTimeStretcher", "file": "AudioDecoderInputTrack.cpp", "line": 624},
-                        {"frame": 1, "function": "AppendData", "file": "AudioDecoderInputTrack.cpp", "line": 423}
+                        {"frame": 0, "function": "EnsureTimeStretcher", "file": "AudioDecoderInputTrack.cpp", "line": 624, "module": "xul.dll"},
+                        {"frame": 1, "function": "AppendData", "file": "AudioDecoderInputTrack.cpp", "line": 423, "module": "ntdll.dll"}
                     ]
                 }
             ]
@@ -351,5 +385,77 @@ mod tests {
         assert_eq!(summary.signature, "Unknown");
         assert_eq!(summary.product, "Unknown");
         assert!(summary.frames.is_empty());
+        assert!(summary.modules.is_empty());
+    }
+
+    #[test]
+    fn test_to_summary_extracts_modules() {
+        let crash: ProcessedCrash = serde_json::from_str(sample_crash_json()).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        assert_eq!(summary.modules.len(), 3);
+        assert_eq!(summary.modules[0].filename, "xul.dll");
+        assert_eq!(summary.modules[0].debug_file, Some("xul.pdb".to_string()));
+        assert_eq!(
+            summary.modules[0].debug_id,
+            Some("F51BCD2A59EB2A194C4C44205044422E1".to_string())
+        );
+        assert_eq!(
+            summary.modules[0].code_id,
+            Some("69934c4ba31f000".to_string())
+        );
+        assert_eq!(summary.modules[0].version, Some("148.0.0.3".to_string()));
+    }
+
+    #[test]
+    fn test_to_summary_modules_missing_json_dump() {
+        let json = r#"{
+            "uuid": "no-json-dump",
+            "threads": [
+                {"thread": 0, "frames": [{"frame": 0, "function": "foo"}]}
+            ]
+        }"#;
+        let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        assert!(summary.modules.is_empty());
+    }
+
+    #[test]
+    fn test_to_summary_modules_missing_modules_key() {
+        let json = r#"{
+            "uuid": "no-modules",
+            "json_dump": {
+                "crashing_thread": 0,
+                "threads": [
+                    {"thread": 0, "frames": [{"frame": 0, "function": "foo"}]}
+                ]
+            }
+        }"#;
+        let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        assert!(summary.modules.is_empty());
+    }
+
+    #[test]
+    fn test_to_summary_modules_optional_fields() {
+        let json = r#"{
+            "uuid": "partial-modules",
+            "json_dump": {
+                "modules": [
+                    {"filename": "bare.dll"}
+                ]
+            }
+        }"#;
+        let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        assert_eq!(summary.modules.len(), 1);
+        assert_eq!(summary.modules[0].filename, "bare.dll");
+        assert!(summary.modules[0].debug_file.is_none());
+        assert!(summary.modules[0].debug_id.is_none());
+        assert!(summary.modules[0].code_id.is_none());
+        assert!(summary.modules[0].version.is_none());
     }
 }

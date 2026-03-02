@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use crate::models::ModulesMode;
 use crate::output::{compact, json, markdown, OutputFormat};
 use crate::{Result, SocorroClient};
 
@@ -20,6 +21,7 @@ pub fn execute(
     depth: usize,
     full: bool,
     all_threads: bool,
+    modules_mode: ModulesMode,
     format: OutputFormat,
 ) -> Result<()> {
     let crash_id = extract_crash_id(crash_id);
@@ -32,12 +34,12 @@ pub fn execute(
         match format {
             OutputFormat::Compact => {
                 let summary = crash.to_summary(depth, all_threads);
-                compact::format_crash(&summary)
+                compact::format_crash(&summary, modules_mode)
             }
             OutputFormat::Json => json::format_crash(&crash)?,
             OutputFormat::Markdown => {
                 let summary = crash.to_summary(depth, all_threads);
-                markdown::format_crash(&summary)
+                markdown::format_crash(&summary, modules_mode)
             }
         }
     };

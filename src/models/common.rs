@@ -42,3 +42,12 @@ pub struct StackFrame {
     pub module: Option<String>,
     pub offset: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleInfo {
+    pub filename: String,
+    pub debug_file: Option<String>,
+    pub debug_id: Option<String>,
+    pub code_id: Option<String>,
+    pub version: Option<String>,
+}
