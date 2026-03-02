@@ -243,7 +243,7 @@ FACET / SORT FIELDS:
     signature, proto_signature, product, version, platform, cpu_arch,
     release_channel, platform_version, platform_pretty_version, process_type,
     plugin_filename, dom_ipc_enabled, adapter_vendor_id, adapter_device_id,
-    build_id
+    build_id, reason, address, cpu_info, cpu_count, uptime
     Use -field for descending sort (e.g., --sort -date).
 
 FILTER LOGIC:
