@@ -50,7 +50,11 @@ API TOKEN:
 UPDATE CHECK:
     On each run, socorro-cli checks crates.io for a newer version (cached daily,
     5-second timeout). If an update is available, a notice is printed to stderr
-    after the command output. Set MOZTOOLS_UPDATE_CHECK=0 to disable.";
+    after the command output. Set MOZTOOLS_UPDATE_CHECK=0 to disable.
+
+    Important: the update notice goes to stderr only. If your environment merges
+    stderr into stdout (e.g. shell 2>&1 redirects), it may corrupt JSON output.
+    In such cases, either redirect stderr separately or set MOZTOOLS_UPDATE_CHECK=0.";
 
 #[derive(Parser)]
 #[command(name = "socorro-cli")]
@@ -577,7 +581,6 @@ fn main() -> Result<()> {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-
     match cli.command {
         Commands::Auth { action } => match action {
             AuthAction::Login => socorro_cli::commands::auth::login()?,

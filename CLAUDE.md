@@ -130,7 +130,7 @@ With `--all-threads`, it formats all threads (marking the crashing one), useful 
 
 **Facet-aware `--limit` default**: When `--facet` is used, `--limit` defaults to 0 (only aggregations shown). Without `--facet`, it defaults to 10. Users can override with `--limit N` to show individual crash rows alongside aggregations. `--facets-size` controls how many buckets each facet returns (e.g., top N signatures).
 
-**Version Checking**: On startup, `moz-cli-version-check` asynchronously checks for newer releases on crates.io. If a newer version is found, a warning is printed after the command completes.
+**Version Checking**: On startup, `moz-cli-version-check` asynchronously checks for newer releases on crates.io. If a newer version is found, a warning is printed to stderr after the command completes. Environments that merge stderr into stdout (e.g. shell `2>&1` redirects) should either redirect stderr separately or set `MOZTOOLS_UPDATE_CHECK=0` to avoid corrupting JSON output.
 
 **Error Handling**: Uses `thiserror` for structured errors. The `Error` enum variants:
 - `Http` — wraps `reqwest::Error` for network/HTTP failures
