@@ -3,7 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::models::ModulesMode;
-use crate::output::{compact, json, markdown, OutputFormat};
+use crate::output::{OutputFormat, compact, json, markdown};
 use crate::{Result, SocorroClient};
 
 fn extract_crash_id(input: &str) -> &str {

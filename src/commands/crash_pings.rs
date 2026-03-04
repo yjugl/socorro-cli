@@ -13,7 +13,7 @@ use crate::models::crash_pings::{
     CrashPingFilters, CrashPingFrame, CrashPingStackResponse, CrashPingStackSummary,
     CrashPingsItem, CrashPingsResponse, CrashPingsSummary,
 };
-use crate::output::{compact, json, markdown, OutputFormat};
+use crate::output::{OutputFormat, compact, json, markdown};
 use crate::{Error, Result};
 
 const BASE_URL: &str = "https://crash-pings.mozilla.org";

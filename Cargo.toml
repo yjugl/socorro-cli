@@ -1,7 +1,7 @@
 [package]
 name = "socorro-cli"
 version = "0.3.0"
-edition = "2021"
+edition = "2024"
 license = "MPL-2.0"
 description = "A Rust CLI tool for querying Mozilla's Socorro crash reporting system, optimized for LLM coding agents"
 repository = "https://github.com/yjugl/socorro-cli"

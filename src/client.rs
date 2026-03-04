@@ -3,9 +3,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::models::{ProcessedCrash, SearchParams, SearchResponse};
-use crate::{auth, Error, Result};
-use reqwest::blocking::Client;
+use crate::{Error, Result, auth};
 use reqwest::StatusCode;
+use reqwest::blocking::Client;
 
 /// Push a SuperSearch filter parameter onto `query_params`.
 ///
@@ -100,10 +100,8 @@ impl SocorroClient {
         let url = format!("{}/ProcessedCrash/", self.base_url);
         let mut request = self.client.get(&url).query(&[("crash_id", crash_id)]);
 
-        if use_auth {
-            if let Some(token) = self.get_auth_header() {
-                request = request.header("Auth-Token", token);
-            }
+        if use_auth && let Some(token) = self.get_auth_header() {
+            request = request.header("Auth-Token", token);
         }
 
         let response = request.send()?;
@@ -350,8 +348,10 @@ mod tests {
         assert!(valid_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
 
         let invalid_id = "abcdef01-2345-6789-abcd-ef012345678g"; // 'g' is not hex
-        assert!(!invalid_id
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() || c == '-'));
+        assert!(
+            !invalid_id
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == '-')
+        );
     }
 }

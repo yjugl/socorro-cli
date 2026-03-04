@@ -445,8 +445,10 @@ mod tests {
 
         assert!(output.contains("# Crash Report"));
         assert!(output.contains("**Crash ID:** `247653e8-7a18-4836-97d1-42a720260120`"));
-        assert!(output
-            .contains("**Signature:** `mozilla::AudioDecoderInputTrack::EnsureTimeStretcher`"));
+        assert!(
+            output
+                .contains("**Signature:** `mozilla::AudioDecoderInputTrack::EnsureTimeStretcher`")
+        );
     }
 
     #[test]
@@ -456,8 +458,10 @@ mod tests {
 
         assert!(output.contains("## Details"));
         assert!(output.contains("- **Crash Reason:** SIGSEGV at `0x0` (null pointer)"));
-        assert!(output
-            .contains("- **Mozilla Crash Reason:** MOZ_RELEASE_ASSERT(mTimeStretcher->Init())"));
+        assert!(
+            output
+                .contains("- **Mozilla Crash Reason:** MOZ_RELEASE_ASSERT(mTimeStretcher->Init())")
+        );
     }
 
     #[test]
@@ -519,7 +523,9 @@ mod tests {
         assert!(output.contains("## Modules"));
         assert!(output.contains("| Module | Version | Debug File | Debug ID | Code ID |"));
         assert!(output.contains("| xul.dll | 148.0.0.3 | xul.pdb | F51BCD2A | 69934c4b |"));
-        assert!(output.contains("| ntdll.dll | 6.2.19041.6456 | ntdll.pdb | 180BF1B9 | 7ec9c15d |"));
+        assert!(
+            output.contains("| ntdll.dll | 6.2.19041.6456 | ntdll.pdb | 180BF1B9 | 7ec9c15d |")
+        );
         // mozglue.dll not in stack frames
         assert!(!output.contains("mozglue.dll"));
     }
@@ -531,7 +537,9 @@ mod tests {
 
         assert!(output.contains("## Modules"));
         assert!(output.contains("| xul.dll | 148.0.0.3 | xul.pdb | F51BCD2A | 69934c4b |"));
-        assert!(output.contains("| ntdll.dll | 6.2.19041.6456 | ntdll.pdb | 180BF1B9 | 7ec9c15d |"));
+        assert!(
+            output.contains("| ntdll.dll | 6.2.19041.6456 | ntdll.pdb | 180BF1B9 | 7ec9c15d |")
+        );
         assert!(output.contains("| mozglue.dll | 148.0 | mozglue.pdb | AABBCCDD | abc123 |"));
     }
 

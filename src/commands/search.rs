@@ -3,7 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::models::SearchParams;
-use crate::output::{compact, json, markdown, OutputFormat};
+use crate::output::{OutputFormat, compact, json, markdown};
 use crate::{Result, SocorroClient};
 
 pub fn execute(client: &SocorroClient, params: SearchParams, format: OutputFormat) -> Result<()> {

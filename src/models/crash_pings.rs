@@ -85,25 +85,25 @@ impl CrashPingsResponse {
     }
 
     pub fn matches_filters(&self, i: usize, filters: &CrashPingFilters) -> bool {
-        if let Some(ref ch) = filters.channel {
-            if !self.channel(i).eq_ignore_ascii_case(ch) {
-                return false;
-            }
+        if let Some(ref ch) = filters.channel
+            && !self.channel(i).eq_ignore_ascii_case(ch)
+        {
+            return false;
         }
-        if let Some(ref os) = filters.os {
-            if !self.os(i).eq_ignore_ascii_case(os) {
-                return false;
-            }
+        if let Some(ref os) = filters.os
+            && !self.os(i).eq_ignore_ascii_case(os)
+        {
+            return false;
         }
-        if let Some(ref proc) = filters.process {
-            if !self.process(i).eq_ignore_ascii_case(proc) {
-                return false;
-            }
+        if let Some(ref proc) = filters.process
+            && !self.process(i).eq_ignore_ascii_case(proc)
+        {
+            return false;
         }
-        if let Some(ref ver) = filters.version {
-            if self.version(i) != ver {
-                return false;
-            }
+        if let Some(ref ver) = filters.version
+            && self.version(i) != ver
+        {
+            return false;
         }
         if let Some(ref sig) = filters.signature {
             let ping_sig = self.signature(i);
@@ -115,10 +115,10 @@ impl CrashPingsResponse {
                 return false;
             }
         }
-        if let Some(ref arch) = filters.arch {
-            if !self.arch(i).eq_ignore_ascii_case(arch) {
-                return false;
-            }
+        if let Some(ref arch) = filters.arch
+            && !self.arch(i).eq_ignore_ascii_case(arch)
+        {
+            return false;
         }
         true
     }

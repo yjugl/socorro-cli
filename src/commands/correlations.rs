@@ -6,7 +6,7 @@ use reqwest::StatusCode;
 use sha1::{Digest, Sha1};
 
 use crate::models::{CorrelationsResponse, CorrelationsTotals};
-use crate::output::{compact, json, markdown, OutputFormat};
+use crate::output::{OutputFormat, compact, json, markdown};
 use crate::{Error, Result};
 
 const CDN_BASE: &str =

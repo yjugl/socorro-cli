@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use crate::Result;
 use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
 use crate::models::{CorrelationsResponse, ProcessedCrash, SearchResponse};
-use crate::Result;
 
 pub fn format_crash(crash: &ProcessedCrash) -> Result<String> {
     Ok(serde_json::to_string_pretty(crash)?)

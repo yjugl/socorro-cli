@@ -27,7 +27,9 @@ pub enum Error {
     #[error("Crash not found: {0}")]
     NotFound(String),
 
-    #[error("Rate limited. Ask a human to run 'socorro-cli auth login' to set an API token that has no permissions attached to it")]
+    #[error(
+        "Rate limited. Ask a human to run 'socorro-cli auth login' to set an API token that has no permissions attached to it"
+    )]
     RateLimited,
 
     #[error("Failed to parse response: {0}")]
