@@ -54,7 +54,20 @@ UPDATE CHECK:
 
     Important: the update notice goes to stderr only. If your environment merges
     stderr into stdout (e.g. shell 2>&1 redirects), it may corrupt JSON output.
-    In such cases, either redirect stderr separately or set MOZTOOLS_UPDATE_CHECK=0.";
+    In such cases, either redirect stderr separately or set MOZTOOLS_UPDATE_CHECK=0.
+
+WORKFLOW:
+    # 1. Find top crash signatures
+    socorro-cli search --facet signature
+
+    # 2. Examine a specific signature
+    socorro-cli search --signature \"OOM | small\"
+
+    # 3. Debug a specific crash instance
+    socorro-cli crash <crash_id from step 2>
+
+    # 4. Find patterns across all crashes with this signature
+    socorro-cli correlations --signature \"OOM | small\"";
 
 #[derive(Parser)]
 #[command(name = "socorro-cli")]
@@ -120,9 +133,10 @@ RATE LIMITS:
     rate limits.
 
 OUTPUT FIELDS:
-    sig         - Crash signature (function where crash occurred)
-    reason      - Crash type (SIGSEGV, EXCEPTION_ACCESS_VIOLATION, etc.)
-    moz_reason  - Mozilla assertion message if applicable
+    sig         - Crash signature (identifies the crash type; often the crashing function, but can also be a category like \"OOM | small\" or \"shutdownhang | ...\")
+    reason      - OS-level crash type and address (SIGSEGV, EXCEPTION_ACCESS_VIOLATION, etc.)
+    moz_reason  - MOZ_CRASH/MOZ_RELEASE_ASSERT message (Mozilla code intentionally triggered the crash)
+    abort       - C/C++ abort() message (third-party or stdlib code called abort)
     product     - Product name and version (Firefox 120.0, Fenix 147.0.1, etc.)
     build       - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
     channel     - Release channel (release, beta, nightly, esr, aurora, default)
@@ -247,7 +261,7 @@ FACET / SORT FIELDS:
     signature, proto_signature, product, version, platform, cpu_arch,
     release_channel, platform_version, platform_pretty_version, process_type,
     plugin_filename, dom_ipc_enabled, adapter_vendor_id, adapter_device_id,
-    build_id, reason, address, cpu_info, cpu_count, uptime
+    build_id, date, reason, address, cpu_info, cpu_count, uptime
     Use -field for descending sort (e.g., --sort -date).
 
 FILTER LOGIC:
@@ -467,7 +481,7 @@ EXAMPLES:
         #[arg(long, default_value = "10")]
         limit: usize,
 
-        /// Fetch symbolicated stack for a specific crash ping ID
+        /// Fetch symbolicated stack for a crash ping ID (IDs come from crash-pings.mozilla.org, not from this tool's output)
         #[arg(long, conflicts_with_all = ["days", "from", "to"])]
         stack: Option<String>,
     },
@@ -547,7 +561,7 @@ EXAMPLES:
         #[arg(long)]
         facet: Vec<String>,
 
-        /// Number of facet buckets to return (e.g., top N signatures)
+        /// Number of facet buckets to return, default 50 (e.g., top N signatures)
         #[arg(long)]
         facets_size: Option<usize>,
 

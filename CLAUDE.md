@@ -91,7 +91,7 @@ followed by a blank line before any code. Do not omit this header from any new f
   - **processed_crash.rs**: `ProcessedCrash`, `Thread`, `CrashSummary` - crash data models. `CrashSummary` includes `modules: Vec<ModuleInfo>` extracted from `json_dump.modules`
   - **search.rs**: `SearchResponse`, `SearchParams`, `CrashHit`, `FacetBucket` - search data models. `SearchParams` includes filters: signature, proto_signature, product, version, platform, cpu_arch, release_channel, platform_version, process_type, date_from, date_to, limit, facets, facets_size, sort. `CrashHit` includes build_id, release_channel, and platform_version fields
   - **correlations.rs**: `CorrelationsTotals`, `CorrelationsResponse`, `CorrelationsSummary` - correlation data models
-  - **crash_pings.rs**: `CrashPingsResponse`, `CrashPingStackResponse`, `CrashPingsSummary` - crash ping data models (struct-of-arrays with string deduplication). `CrashPingsSummary` uses `date_from`/`date_to` fields for date range support
+  - **crash_pings.rs**: `CrashPingsResponse`, `CrashPingStackResponse`, `CrashPingsSummary`, `CrashPingStackSummary` - crash ping data models (struct-of-arrays with string deduplication). `CrashPingsSummary` uses `date_from`/`date_to` fields for date range support
   - **common.rs**: Shared types like `StackFrame` and `ModuleInfo`
 - **src/output/**: Output formatters
   - **compact.rs**: Token-optimized plain text (default, LLM-friendly)
