@@ -640,6 +640,9 @@ pub fn format_crash_pings(summary: &CrashPingsSummary) -> String {
                 "  {} ({}, {:.2}%)\n",
                 item.label, item.count, item.percentage
             ));
+            if !item.example_ids.is_empty() {
+                output.push_str(&format!("    e.g. {}\n", item.example_ids.join(", ")));
+            }
         }
     }
 

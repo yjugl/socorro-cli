@@ -100,7 +100,7 @@ fn aggregate(
     date_from: &str,
     date_to: &str,
 ) -> CrashPingsSummary {
-    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut counts: HashMap<String, (usize, Vec<String>)> = HashMap::new();
     let mut total = 0usize;
     let mut filtered_total = 0usize;
 
@@ -112,17 +112,24 @@ fn aggregate(
             }
             filtered_total += 1;
             let value = response.facet_value(i, facet);
-            *counts.entry(value).or_insert(0) += 1;
+            let entry = counts.entry(value).or_insert_with(|| (0, Vec::new()));
+            entry.0 += 1;
+            if entry.1.len() < 3 {
+                entry.1.push(response.crashid[i].clone());
+            }
         }
     }
 
-    let mut items: Vec<(String, usize)> = counts.into_iter().collect();
+    let mut items: Vec<(String, usize, Vec<String>)> = counts
+        .into_iter()
+        .map(|(k, (count, ids))| (k, count, ids))
+        .collect();
     items.sort_by(|a, b| b.1.cmp(&a.1));
     items.truncate(limit);
 
     let items = items
         .into_iter()
-        .map(|(label, count)| {
+        .map(|(label, count, example_ids)| {
             let percentage = if filtered_total > 0 {
                 count as f64 / filtered_total as f64 * 100.0
             } else {
@@ -132,6 +139,7 @@ fn aggregate(
                 label,
                 count,
                 percentage,
+                example_ids,
             }
         })
         .collect();
@@ -341,8 +349,12 @@ mod tests {
         assert_eq!(summary.items.len(), 2);
         assert_eq!(summary.items[0].label, "OOM | small");
         assert_eq!(summary.items[0].count, 3);
+        assert_eq!(summary.items[0].example_ids.len(), 3);
+        assert_eq!(summary.items[0].example_ids, vec!["id1", "id2", "id3"]);
         assert_eq!(summary.items[1].label, "setup_stack_prot");
         assert_eq!(summary.items[1].count, 2);
+        assert_eq!(summary.items[1].example_ids.len(), 2);
+        assert_eq!(summary.items[1].example_ids, vec!["id4", "id5"]);
     }
 
     #[test]
@@ -361,6 +373,8 @@ mod tests {
             "2026-02-12",
         );
         assert_eq!(summary.filtered_total, 3);
+        // Only Windows pings: id1, id2, id4
+        assert_eq!(summary.items[0].example_ids, vec!["id1", "id2"]);
     }
 
     #[test]
@@ -371,8 +385,10 @@ mod tests {
         assert_eq!(summary.items.len(), 2);
         assert_eq!(summary.items[0].label, "Windows");
         assert_eq!(summary.items[0].count, 3);
+        assert_eq!(summary.items[0].example_ids, vec!["id1", "id2", "id4"]);
         assert_eq!(summary.items[1].label, "Linux");
         assert_eq!(summary.items[1].count, 2);
+        assert_eq!(summary.items[1].example_ids, vec!["id3", "id5"]);
     }
 
     #[test]
@@ -389,6 +405,7 @@ mod tests {
         );
         assert_eq!(summary.items.len(), 1);
         assert_eq!(summary.items[0].label, "OOM | small");
+        assert_eq!(summary.items[0].example_ids.len(), 3);
     }
 
     #[test]
@@ -405,6 +422,7 @@ mod tests {
         );
         assert!((summary.items[0].percentage - 60.0).abs() < 0.01);
         assert!((summary.items[1].percentage - 40.0).abs() < 0.01);
+        assert!(!summary.items[0].example_ids.is_empty());
     }
 
     #[test]
@@ -424,8 +442,11 @@ mod tests {
         assert_eq!(summary.filtered_total, 10);
         assert_eq!(summary.items[0].label, "OOM | small");
         assert_eq!(summary.items[0].count, 6);
+        // Capped at 3 example IDs even with 6 matching pings
+        assert_eq!(summary.items[0].example_ids.len(), 3);
         assert_eq!(summary.items[1].label, "setup_stack_prot");
         assert_eq!(summary.items[1].count, 4);
+        assert_eq!(summary.items[1].example_ids.len(), 3);
         assert_eq!(summary.date_from, "2026-02-12");
         assert_eq!(summary.date_to, "2026-02-13");
     }

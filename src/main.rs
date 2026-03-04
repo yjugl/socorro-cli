@@ -481,7 +481,7 @@ EXAMPLES:
         #[arg(long, default_value = "10")]
         limit: usize,
 
-        /// Fetch symbolicated stack for a crash ping ID (IDs come from crash-pings.mozilla.org, not from this tool's output)
+        /// Fetch symbolicated stack for a crash ping ID (IDs appear in crash-pings aggregation output)
         #[arg(long, conflicts_with_all = ["days", "from", "to"])]
         stack: Option<String>,
     },

@@ -262,12 +262,21 @@ pub fn format_crash_pings(summary: &CrashPingsSummary) -> String {
     } else {
         let facet_label = &summary.facet_name;
         output.push_str(&format!("## By {}\n\n", facet_label));
-        output.push_str(&format!("| {} | Count | % |\n", facet_label));
-        output.push_str("|---|------:|--:|\n");
+        output.push_str(&format!("| {} | Count | % | Example IDs |\n", facet_label));
+        output.push_str("|---|------:|--:|---|\n");
         for item in &summary.items {
+            let ids = if item.example_ids.is_empty() {
+                String::new()
+            } else {
+                item.example_ids
+                    .iter()
+                    .map(|id| format!("`{}`", id))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
             output.push_str(&format!(
-                "| {} | {} | {:.2}% |\n",
-                item.label, item.count, item.percentage
+                "| {} | {} | {:.2}% | {} |\n",
+                item.label, item.count, item.percentage, ids
             ));
         }
     }

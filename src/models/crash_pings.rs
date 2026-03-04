@@ -194,6 +194,7 @@ pub struct CrashPingsItem {
     pub label: String,
     pub count: usize,
     pub percentage: f64,
+    pub example_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -487,11 +488,13 @@ mod tests {
                     label: "Windows".to_string(),
                     count: 3900,
                     percentage: 86.24,
+                    example_ids: vec!["id1".to_string(), "id2".to_string()],
                 },
                 CrashPingsItem {
                     label: "Linux".to_string(),
                     count: 400,
                     percentage: 8.85,
+                    example_ids: vec!["id3".to_string()],
                 },
             ],
         };
