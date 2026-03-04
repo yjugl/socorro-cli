@@ -439,6 +439,7 @@ mod tests {
 
         assert!(output.contains("FOUND 42 crashes"));
         assert!(output.contains("247653e8"));
+        assert!(output.contains("2024-01-15"));
         assert!(output.contains("Firefox 120.0"));
         assert!(output.contains("Windows 10.0.19045"));
         assert!(output.contains("mozilla::SomeFunction"));
@@ -691,8 +692,8 @@ pub fn format_search(response: &SearchResponse) -> String {
         let channel = hit.release_channel.as_deref().unwrap_or("?");
         let build = hit.build_id.as_deref().unwrap_or("?");
         output.push_str(&format!(
-            "{} | {} {} | {} | {} | {} | {}\n",
-            hit.uuid, hit.product, hit.version, platform, channel, build, hit.signature
+            "{} | {} | {} {} | {} | {} | {} | {}\n",
+            hit.uuid, hit.date, hit.product, hit.version, platform, channel, build, hit.signature
         ));
     }
 
