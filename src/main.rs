@@ -384,7 +384,8 @@ LIMITATIONS:
 enum Commands {
     /// Manage API token stored in system keychain
     #[command(
-        long_about = "\
+        long_about = if cfg!(any(target_os = "windows", target_os = "macos", feature = "secret-service")) {
+"\
 Manage the API token stored in the system keychain.
 
 Tokens provide higher rate limits (no extra permissions needed).
@@ -399,8 +400,28 @@ EXAMPLES:
     socorro-cli auth status
 
     # Remove stored token
-    socorro-cli auth logout",
-        after_help = "Run 'socorro-cli auth status' to check if a token is stored."
+    socorro-cli auth logout"
+        } else {
+"\
+Check API token status.
+
+This build was compiled without system keychain support. Authentication
+is available via the SOCORRO_API_TOKEN_PATH environment variable, which
+should point to a file containing your API token.
+
+Tokens provide higher rate limits (no extra permissions needed).
+Humans can create tokens at: https://crash-stats.mozilla.org/api/tokens/
+IMPORTANT: Tokens MUST have NO permissions attached.
+
+EXAMPLES:
+    # Check token status
+    socorro-cli auth status"
+        },
+        after_help = if cfg!(any(target_os = "windows", target_os = "macos", feature = "secret-service")) {
+            "Run 'socorro-cli auth status' to check if a token is stored."
+        } else {
+            "Set SOCORRO_API_TOKEN_PATH to a file containing your API token."
+        }
     )]
     Auth {
         #[command(subcommand)]
@@ -574,8 +595,16 @@ EXAMPLES:
 #[derive(Subcommand)]
 enum AuthAction {
     /// Store API token in system keychain (prompts for token)
+    #[cfg_attr(
+        not(any(target_os = "windows", target_os = "macos", feature = "secret-service")),
+        command(hide = true)
+    )]
     Login,
     /// Remove API token from system keychain
+    #[cfg_attr(
+        not(any(target_os = "windows", target_os = "macos", feature = "secret-service")),
+        command(hide = true)
+    )]
     Logout,
     /// Check if API token is stored
     Status,

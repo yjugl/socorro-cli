@@ -15,6 +15,13 @@ pkg-fmt = "tgz"
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-fmt = "zip"
 
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[features]
+default = ["secret-service"]
+secret-service = ["keyring/sync-secret-service"]
+
 [[bin]]
 name = "socorro-cli"
 path = "src/main.rs"
@@ -33,7 +40,7 @@ chrono = "0.4"
 moz-cli-version-check = "0.2"
 dirs = "6"
 sha1 = "0.10"
-keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+keyring = { version = "3", features = ["windows-native", "apple-native"] }
 rpassword = "7"
 
 [dev-dependencies]

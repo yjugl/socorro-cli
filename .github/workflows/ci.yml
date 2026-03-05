@@ -52,7 +52,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            use_cross: false
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            use_cross: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            use_cross: false
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
@@ -64,3 +73,40 @@ jobs:
       run: cargo build --verbose
     - name: Build release
       run: cargo build --release --verbose
+
+  build-cross:
+    name: Build (cross)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            cargo_flags: ""
+          - target: x86_64-unknown-linux-musl
+            cargo_flags: "--no-default-features"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+    - uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.target }}
+    - name: Install cross
+      run: cargo install cross --locked
+    - name: Build
+      run: cross build --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
+
+  build-win-arm64:
+    name: Build (Windows ARM64)
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: aarch64-pc-windows-msvc
+    - uses: Swatinem/rust-cache@v2
+      with:
+        key: aarch64-pc-windows-msvc
+    - name: Build
+      run: cargo build --target aarch64-pc-windows-msvc
