@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::commands::crash_pings::format_frame_location;
+use crate::models::bugs::BugsSummary;
 use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
 use crate::models::{CorrelationsSummary, CrashSummary, ModulesMode, SearchResponse, StackFrame};
 use std::collections::HashSet;
@@ -513,7 +514,36 @@ mod tests {
         assert_eq!(format_function(&frame), "???");
     }
 
+    use crate::models::bugs::{BugGroup, BugsSummary};
     use crate::models::{CorrelationItem, CorrelationItemPrior, CorrelationsSummary};
+
+    #[test]
+    fn test_format_bugs_with_results() {
+        let summary = BugsSummary {
+            bugs: vec![
+                BugGroup {
+                    bug_id: 888888,
+                    signatures: vec!["OOM | small".to_string()],
+                },
+                BugGroup {
+                    bug_id: 999999,
+                    signatures: vec!["OOM | large".to_string(), "OOM | small".to_string()],
+                },
+            ],
+        };
+        let output = format_bugs(&summary);
+        assert!(output.contains("bug 888888\n"));
+        assert!(output.contains("  OOM | small\n"));
+        assert!(output.contains("bug 999999\n"));
+        assert!(output.contains("  OOM | large\n"));
+    }
+
+    #[test]
+    fn test_format_bugs_empty() {
+        let summary = BugsSummary { bugs: vec![] };
+        let output = format_bugs(&summary);
+        assert!(output.contains("No bugs found."));
+    }
 
     fn sample_correlations_summary() -> CorrelationsSummary {
         CorrelationsSummary {
@@ -671,6 +701,23 @@ pub fn format_crash_ping_stack(summary: &CrashPingStackSummary) -> String {
         output.push_str("\nstack:\n");
         for (i, frame) in summary.frames.iter().enumerate() {
             output.push_str(&format!("  #{} {}\n", i, format_frame_location(frame)));
+        }
+    }
+
+    output
+}
+
+pub fn format_bugs(summary: &BugsSummary) -> String {
+    let mut output = String::new();
+
+    if summary.bugs.is_empty() {
+        output.push_str("No bugs found.\n");
+    } else {
+        for group in &summary.bugs {
+            output.push_str(&format!("bug {}\n", group.bug_id));
+            for sig in &group.signatures {
+                output.push_str(&format!("  {}\n", sig));
+            }
         }
     }
 

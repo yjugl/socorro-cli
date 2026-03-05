@@ -63,10 +63,13 @@ WORKFLOW:
     # 2. Examine a specific signature
     socorro-cli search --signature \"OOM | small\"
 
-    # 3. Debug a specific crash instance
+    # 3. Check if there are existing Bugzilla bugs for this crash
+    socorro-cli bugs --signature \"OOM | small\"
+
+    # 4. Debug a specific crash instance
     socorro-cli crash <crash_id from step 2>
 
-    # 4. Find patterns across all crashes with this signature
+    # 5. Find patterns across all crashes with this signature
     socorro-cli correlations --signature \"OOM | small\"";
 
 #[derive(Parser)]
@@ -350,6 +353,41 @@ CRASH PINGS VS CRASH REPORTS:
 
     Use crash-pings for volume/trend analysis; use crash for deep debugging.";
 
+const BUGS_ABOUT: &str = "\
+Look up Bugzilla bugs associated with crash signatures, or find signatures
+associated with specific bug IDs.
+
+Socorro maintains a mapping between Bugzilla bugs and crash signatures (from
+the cf_crash_signature field in Bugzilla). This command queries that mapping.
+
+When looking up by --signature, the API also returns 'related' bugs: if bug 123
+is linked to signatures A and B, querying for signature A will return both
+{123, A} and {123, B}.
+
+EXAMPLES:
+    # Find bugs for a crash signature
+    socorro-cli bugs --signature \"OOM | small\"
+
+    # Find bugs for multiple signatures
+    socorro-cli bugs --signature \"OOM | small\" --signature \"OOM | large\"
+
+    # Find signatures associated with a Bugzilla bug
+    socorro-cli bugs --bug-id 1234567
+
+    # Look up multiple bugs at once
+    socorro-cli bugs --bug-id 1234567 --bug-id 9876543
+
+OUTPUT:
+    Results are grouped by bug ID, with Bugzilla links and associated signatures.
+    Use --format json for the raw API response.
+
+LIMITATIONS:
+    Security-restricted Bugzilla bugs may not appear in results. Socorro syncs
+    bug associations from Bugzilla periodically, and bugs that are not visible
+    to Socorro's Bugzilla API token are not included.
+
+NOTE: --signature and --bug-id are mutually exclusive. At least one must be provided.";
+
 const CORRELATIONS_ABOUT: &str = "\
 Show attributes that are statistically over-represented in crashes with a given
 signature compared to the overall crash population.
@@ -505,6 +543,18 @@ EXAMPLES:
         /// Fetch symbolicated stack for a crash ping ID (IDs appear in crash-pings aggregation output)
         #[arg(long, conflicts_with_all = ["days", "from", "to"])]
         stack: Option<String>,
+    },
+
+    /// Look up Bugzilla bugs for crash signatures (or signatures for bugs)
+    #[command(long_about = BUGS_ABOUT)]
+    Bugs {
+        /// Crash signature(s) to look up bugs for (repeatable)
+        #[arg(long, conflicts_with = "bug_id")]
+        signature: Vec<String>,
+
+        /// Bugzilla bug ID(s) to look up signatures for (repeatable)
+        #[arg(long, conflicts_with = "signature")]
+        bug_id: Vec<u64>,
     },
 
     /// Show over-represented attributes for a crash signature
@@ -688,6 +738,15 @@ fn run() -> Result<()> {
                 stack.as_deref(),
                 cli.format,
             )?;
+        }
+        Commands::Bugs { signature, bug_id } => {
+            if signature.is_empty() && bug_id.is_empty() {
+                return Err(socorro_cli::Error::ParseError(
+                    "Provide at least one --signature or --bug-id".to_string(),
+                ));
+            }
+            let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
+            socorro_cli::commands::bugs::execute(&client, &signature, &bug_id, cli.format)?;
         }
         Commands::Correlations { signature, channel } => {
             socorro_cli::commands::correlations::execute(&signature, &channel, cli.format)?;

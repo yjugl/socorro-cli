@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use crate::models::bugs::BugsResponse;
 use crate::models::{ProcessedCrash, SearchParams, SearchResponse};
 use crate::{Error, Result, auth};
 use reqwest::StatusCode;
@@ -114,6 +115,58 @@ impl SocorroClient {
                 })
             }
             StatusCode::NOT_FOUND => Err(Error::NotFound(crash_id.to_string())),
+            StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
+            _ => Err(Error::Http(response.error_for_status().unwrap_err())),
+        }
+    }
+
+    pub fn get_bugs(&self, signatures: &[String]) -> Result<BugsResponse> {
+        let url = format!("{}/Bugs/", self.base_url);
+
+        let mut request = self.client.get(&url);
+        for sig in signatures {
+            request = request.query(&[("signatures", sig)]);
+        }
+
+        if let Some(token) = self.get_auth_header() {
+            request = request.header("Auth-Token", token);
+        }
+
+        let response = request.send()?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let text = response.text()?;
+                serde_json::from_str(&text).map_err(|e| {
+                    Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)]))
+                })
+            }
+            StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
+            _ => Err(Error::Http(response.error_for_status().unwrap_err())),
+        }
+    }
+
+    pub fn get_signatures_by_bugs(&self, bug_ids: &[u64]) -> Result<BugsResponse> {
+        let url = format!("{}/SignaturesByBugs/", self.base_url);
+
+        let mut request = self.client.get(&url);
+        for id in bug_ids {
+            request = request.query(&[("bug_ids", id.to_string())]);
+        }
+
+        if let Some(token) = self.get_auth_header() {
+            request = request.header("Auth-Token", token);
+        }
+
+        let response = request.send()?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let text = response.text()?;
+                serde_json::from_str(&text).map_err(|e| {
+                    Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)]))
+                })
+            }
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
             _ => Err(Error::Http(response.error_for_status().unwrap_err())),
         }

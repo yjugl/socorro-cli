@@ -3,8 +3,13 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::Result;
+use crate::models::bugs::BugsResponse;
 use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
 use crate::models::{CorrelationsResponse, ProcessedCrash, SearchResponse};
+
+pub fn format_bugs(response: &BugsResponse) -> Result<String> {
+    Ok(serde_json::to_string_pretty(response)?)
+}
 
 pub fn format_crash(crash: &ProcessedCrash) -> Result<String> {
     Ok(serde_json::to_string_pretty(crash)?)

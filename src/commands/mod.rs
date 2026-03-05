@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 pub mod auth;
+pub mod bugs;
 pub mod correlations;
 pub mod crash;
 pub mod crash_pings;

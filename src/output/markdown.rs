@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::commands::crash_pings::format_frame_location;
+use crate::models::bugs::BugsSummary;
 use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
 use crate::models::{CorrelationsSummary, CrashSummary, ModulesMode, SearchResponse, StackFrame};
 use std::collections::HashSet;
@@ -24,6 +25,33 @@ fn format_function(frame: &StackFrame) -> String {
             parts.join(" ")
         }
     }
+}
+
+pub fn format_bugs(summary: &BugsSummary) -> String {
+    let mut output = String::new();
+
+    output.push_str("# Bug Associations\n\n");
+
+    if summary.bugs.is_empty() {
+        output.push_str("No bugs found.\n");
+    } else {
+        output.push_str("| Bug | Signatures |\n");
+        output.push_str("|-----|------------|\n");
+        for group in &summary.bugs {
+            let sigs = group
+                .signatures
+                .iter()
+                .map(|s| format!("`{}`", s))
+                .collect::<Vec<_>>()
+                .join(", ");
+            output.push_str(&format!(
+                "| [{}](https://bugzilla.mozilla.org/show_bug.cgi?id={}) | {} |\n",
+                group.bug_id, group.bug_id, sigs
+            ));
+        }
+    }
+
+    output
 }
 
 pub fn format_crash(summary: &CrashSummary, modules_mode: ModulesMode) -> String {
@@ -601,7 +629,31 @@ mod tests {
         assert!(output.contains("- **120.0**: 50 crashes"));
     }
 
+    use crate::models::bugs::{BugGroup, BugsSummary};
     use crate::models::{CorrelationItem, CorrelationItemPrior, CorrelationsSummary};
+
+    #[test]
+    fn test_format_bugs_markdown_with_results() {
+        let summary = BugsSummary {
+            bugs: vec![BugGroup {
+                bug_id: 999999,
+                signatures: vec!["OOM | small".to_string(), "OOM | large".to_string()],
+            }],
+        };
+        let output = format_bugs(&summary);
+        assert!(output.contains("# Bug Associations"));
+        assert!(output.contains("| Bug | Signatures |"));
+        assert!(output.contains("[999999](https://bugzilla.mozilla.org/show_bug.cgi?id=999999)"));
+        assert!(output.contains("`OOM | small`"));
+        assert!(output.contains("`OOM | large`"));
+    }
+
+    #[test]
+    fn test_format_bugs_markdown_empty() {
+        let summary = BugsSummary { bugs: vec![] };
+        let output = format_bugs(&summary);
+        assert!(output.contains("No bugs found."));
+    }
 
     #[test]
     fn test_format_correlations_markdown_header() {

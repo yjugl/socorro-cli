@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-socorro-cli is a Rust CLI tool for querying Mozilla's Socorro crash reporting system. It's optimized for LLM coding agents with token-efficient output formats. The tool provides five main commands: `crash` (fetch individual crash details), `search` (search and aggregate crashes), `correlations` (show over-represented attributes for a signature), `crash-pings` (query opt-out crash ping telemetry from crash-pings.mozilla.org), and `auth` (manage API token storage).
+socorro-cli is a Rust CLI tool for querying Mozilla's Socorro crash reporting system. It's optimized for LLM coding agents with token-efficient output formats. The tool provides six main commands: `crash` (fetch individual crash details), `search` (search and aggregate crashes), `bugs` (look up Bugzilla bugs for crash signatures or vice versa), `correlations` (show over-represented attributes for a signature), `crash-pings` (query opt-out crash ping telemetry from crash-pings.mozilla.org), and `auth` (manage API token storage).
 
 ## Build & Development Commands
 
@@ -22,6 +22,8 @@ cargo run -- crash 247653e8-7a18-4836-97d1-42a720260120 --modules full
 cargo run -- search --signature "OOM | small"
 cargo run -- search --signature "OOM | small" --date 2026-02-20
 cargo run -- search --signature "OOM | small" --from 2026-02-10 --to 2026-02-20
+cargo run -- bugs --signature "OOM | small"
+cargo run -- bugs --bug-id 1234567
 cargo run -- correlations --signature "OOM | small"
 cargo run -- crash-pings --channel release --os Windows
 cargo run -- crash-pings --days 7 --signature "OOM | small"
@@ -76,11 +78,14 @@ followed by a blank line before any code. Do not omit this header from any new f
 - **src/client.rs**: `SocorroClient` - HTTP client for Socorro API
   - `get_crash()`: Fetches processed crash data by ID
   - `search()`: Queries SuperSearch API with filters
+  - `get_bugs()`: Queries Bugs API for bug associations by signature
+  - `get_signatures_by_bugs()`: Queries SignaturesByBugs API for signatures by bug ID
   - Automatically retrieves auth token from keychain via `get_auth_header()`
 - **src/commands/**: Command implementations
   - **auth.rs**: Handles `auth login/logout/status` subcommands
   - **crash.rs**: Handles crash fetching and output formatting (accepts `ModulesMode` for `--modules` flag)
   - **search.rs**: Handles crash search and aggregation
+  - **bugs.rs**: Handles `bugs` command, dispatches to `get_bugs()` or `get_signatures_by_bugs()` based on flags
   - **correlations.rs**: Fetches correlation data from CDN (not Socorro API), computes signature hash, handles CDN HTTP requests
   - **crash_pings.rs**: Fetches crash ping data from crash-pings.mozilla.org, client-side filtering/aggregation, stack trace fetching
 - **src/cache.rs**: Generic file cache module using OS cache directory (`dirs::cache_dir()`)
@@ -90,6 +95,7 @@ followed by a blank line before any code. Do not omit this header from any new f
 - **src/models/**: Data structures for Socorro API responses
   - **processed_crash.rs**: `ProcessedCrash`, `Thread`, `CrashSummary` - crash data models. `CrashSummary` includes `modules: Vec<ModuleInfo>` extracted from `json_dump.modules`
   - **search.rs**: `SearchResponse`, `SearchParams`, `CrashHit`, `FacetBucket` - search data models. `SearchParams` includes filters: signature, proto_signature, product, version, platform, cpu_arch, release_channel, platform_version, process_type, date_from, date_to, limit, facets, facets_size, sort. `CrashHit` includes build_id, release_channel, and platform_version fields
+  - **bugs.rs**: `BugsResponse`, `BugHit`, `BugsSummary`, `BugGroup` - bug association data models. `BugsResponse` is the raw API response; `BugsSummary` groups hits by bug ID with sorted signatures
   - **correlations.rs**: `CorrelationsTotals`, `CorrelationsResponse`, `CorrelationsSummary` - correlation data models
   - **crash_pings.rs**: `CrashPingsResponse`, `CrashPingStackResponse`, `CrashPingsSummary`, `CrashPingStackSummary` - crash ping data models (struct-of-arrays with string deduplication). `CrashPingsSummary` uses `date_from`/`date_to` fields for date range support. `CrashPingsItem` includes `example_ids: Vec<String>` (up to 3 crash ping IDs per bucket, usable with `--stack`)
   - **common.rs**: Shared types like `StackFrame` and `ModuleInfo`
@@ -105,6 +111,7 @@ followed by a blank line before any code. Do not omit this header from any new f
 3. Command module:
    - For crash: extracts crash ID from URL if needed → `client.get_crash()` → converts `ProcessedCrash` to `CrashSummary` (including modules from `json_dump.modules`) → formats output with `--modules` mode (none/stack/full)
    - For search: resolves date params (`--date`, `--days`, `--from`/`--to`) into `date_from`/`date_to` → builds `SearchParams` → `client.search()` → formats `SearchResponse`
+   - For bugs: calls `client.get_bugs()` or `client.get_signatures_by_bugs()` → converts `BugsResponse` to `BugsSummary` (grouped by bug ID) → formats output
    - For correlations: builds reqwest client with gzip → fetches totals + per-signature data from CDN → converts `CorrelationsResponse` to `CorrelationsSummary` → formats output
    - For crash-pings: resolves date params (`--date`, `--days`, `--from`/`--to`) into a date range → builds reqwest client with gzip → fetches each day's ping data from crash-pings.mozilla.org (cached locally, skips 404/202 with warning) → aggregates across all dates → formats `CrashPingsSummary`; or fetches individual stack trace → formats `CrashPingStackSummary`
 4. Output formatter generates final text based on selected format
@@ -152,6 +159,8 @@ The `search` and `crash-pings` commands query different data sources (Socorro AP
 **Endpoints Used**:
 - `/ProcessedCrash/` - fetch individual crash by ID
 - `/SuperSearch/` - search/aggregate crashes
+- `/Bugs/` - look up Bugzilla bugs for crash signatures (returns related bugs too)
+- `/SignaturesByBugs/` - look up crash signatures for Bugzilla bug IDs
 
 **Authentication**: Optional `Auth-Token` header for higher rate limits. Token is retrieved in order:
 1. System keychain (via `socorro-cli auth login`)
@@ -168,15 +177,16 @@ Run tests with:
 cargo test
 ```
 
-The test suite (125 tests) covers:
+The test suite (134 tests) covers:
 - **Crash ID extraction**: Bare IDs, full URLs, URLs with trailing slashes
 - **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode, module extraction from `json_dump.modules`
 - **Search models**: SearchResponse/CrashHit deserialization, facets parsing
+- **Bugs models**: Deserialization, `to_summary()` grouping by bug ID, signature sorting, empty response handling
 - **Correlations models**: Deserialization, `to_summary()` percentage calculations, `format_item_map()` for item display
 - **Crash pings models**: IndexedStrings/NullableIndexedStrings deserialization, accessor methods, filter matching (channel, OS, process, version, signature exact/contains, arch, combined), facet value resolution, stack response deserialization
 - **Crash pings command**: Aggregation by signature/OS, filtering, limit, percentage calculations, frame formatting, multi-response aggregation, date range generation
 - **Cache module**: Cache directory creation, read/write roundtrip, empty cache handling
-- **Output formatters**: Compact and Markdown formatters for crash (including `--modules` none/stack/full modes), search, correlations, and crash pings output
+- **Output formatters**: Compact and Markdown formatters for crash (including `--modules` none/stack/full modes), search, bugs, correlations, and crash pings output
 - **Client validation**: Crash ID format validation (rejects invalid characters, potential injection attempts)
 - **Auth token file**: Reading from `SOCORRO_API_TOKEN_PATH`, whitespace handling, missing file handling
 
