@@ -8,7 +8,7 @@ repository = "https://github.com/yjugl/socorro-cli"
 authors = ["Paul Adenot <paul@paul.cx>", "Yannis Juglaret <yjuglaret@mozilla.com>"]
 
 [package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.{ archive-format }"
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.{ archive-format }"
 bin-dir = "{ bin }{ binary-ext }"
 pkg-fmt = "tgz"
 

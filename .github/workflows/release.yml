@@ -3,87 +3,59 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
-
-env:
-  CARGO_TERM_COLOR: always
-  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+      - "v*"
 
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
-    steps:
-      - name: Get version from tag
-        id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-
-  build-release:
-    name: Build Release
-    needs: create-release
-    runs-on: ${{ matrix.os }}
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            archive: tar.gz
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive_ext: tar.gz
             use_cross: false
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive_ext: tar.gz
             use_cross: true
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            archive: tar.gz
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            archive_ext: tar.gz
             use_cross: true
             cargo_flags: "--no-default-features"
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            archive_ext: zip
             use_cross: false
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            archive: tar.gz
+          - target: aarch64-pc-windows-msvc
+            runner: windows-latest
+            archive_ext: zip
             use_cross: false
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            archive: zip
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            archive_ext: tar.gz
             use_cross: false
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            archive: zip
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            archive_ext: tar.gz
             use_cross: false
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-          workspaces: |
-            . -> target
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux' && !matrix.use_cross
@@ -91,49 +63,44 @@ jobs:
 
       - name: Install cross
         if: matrix.use_cross
-        run: cargo install cross --locked
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Build
-        shell: bash
-        run: |
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
-          else
-            cargo build --release --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
-          fi
+        run: ${{ matrix.use_cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
 
       - name: Package (Unix)
-        if: matrix.archive == 'tar.gz'
+        if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf socorro-cli-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz socorro-cli
-          mv socorro-cli-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz ${{ github.workspace }}
+          tar czf ../../../socorro-cli-${{ matrix.target }}.tar.gz socorro-cli
+          cd ../../..
 
       - name: Package (Windows)
-        if: matrix.archive == 'zip'
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          cd target/${{ matrix.target }}/release
-          7z a socorro-cli-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip socorro-cli.exe
-          mv socorro-cli-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip ${{ github.workspace }}
+          Compress-Archive -Path target/${{ matrix.target }}/release/socorro-cli.exe -DestinationPath socorro-cli-${{ matrix.target }}.zip
 
-      - name: Upload Release Asset (Unix)
-        if: matrix.archive == 'tar.gz'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./socorro-cli-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
-          asset_name: socorro-cli-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
-          asset_content_type: application/gzip
+          name: socorro-cli-${{ matrix.target }}
+          path: socorro-cli-${{ matrix.target }}.${{ matrix.archive_ext }}
 
-      - name: Upload Release Asset (Windows)
-        if: matrix.archive == 'zip'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./socorro-cli-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip
-          asset_name: socorro-cli-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip
-          asset_content_type: application/zip
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            socorro-cli-*.tar.gz
+            socorro-cli-*.zip
+          generate_release_notes: true
