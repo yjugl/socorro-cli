@@ -1,0 +1,161 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [0.5.0] - 2026-03-05
+
+### New Features
+
+- **`bugs` command**: Look up Bugzilla bugs associated with crash signatures,
+  or find signatures associated with specific bug IDs. Queries Socorro's
+  `/api/Bugs/` and `/api/SignaturesByBugs/` endpoints.
+  - `socorro-cli bugs --signature "OOM | small"` — find bugs for a signature
+  - `socorro-cli bugs --bug-id 1234567` — find signatures for a bug
+  - Both flags are repeatable; results are grouped by bug ID. Compact, JSON,
+    and Markdown output formats are supported.
+
+### New Platforms
+
+- Linux ARM64 (`aarch64-unknown-linux-gnu`)
+- Linux musl (`x86_64-unknown-linux-musl`) — statically linked, no system
+  keychain support (use `SOCORRO_API_TOKEN_PATH` for auth)
+- Windows ARM64 (`aarch64-pc-windows-msvc`)
+
+### CI & Build Improvements
+
+- Clippy and tests now run on all three OSes (Linux, Windows, macOS) instead
+  of Linux only.
+- Replaced deprecated `actions/create-release@v1` and
+  `upload-release-asset@v1` with artifact-based release flow using
+  `softprops/action-gh-release@v2`.
+- Release is only created after all platform builds succeed.
+- Upgraded to `actions/cache@v4`; install `cross` from git instead of
+  crates.io.
+- Dropped version from release archive filenames for stable `cargo binstall`
+  URLs.
+
+### Internal
+
+- Auth module refactored with conditional compilation: keychain support is
+  available on Windows and macOS unconditionally, while Linux requires the
+  `secret-service` feature (D-Bus). Builds without keychain support (e.g.,
+  musl) show a clear message directing users to `SOCORRO_API_TOKEN_PATH`.
+
+## [0.4.0] - 2026-03-04
+
+### New Features
+
+- **`--modules` flag for `crash` command**: Show loaded module debug info
+  (`debug_file`, `debug_id`, `code_id`, `version`) alongside crash output. Three
+  modes: `stack` (default, only modules appearing in displayed frames), `full`
+  (all loaded modules), `none` (omit section). Useful for invoking symdis
+  without needing `--full`.
+- **Example crash ping IDs in aggregation output**: Each `crash-pings`
+  aggregation bucket now shows up to 3 example crash ping IDs, so you can use
+  them directly with `--stack` without visiting crash-pings.mozilla.org.
+- **Crash date in search compact output**: Search results now include the
+  crash timestamp, so agents can see timing without fetching each crash
+  individually.
+
+### Improvements
+
+- Documented additional search facets: `reason`, `address`, `cpu_info`,
+  `cpu_count`, `uptime` (these already worked but weren't listed in `--help`).
+- Documented that `search` and `crash-pings` use different flag names and
+  field values.
+- Added warning about merging stdout and stderr (version check output can
+  corrupt JSON).
+
+### Internal
+
+- Switched to Rust edition 2024.
+- Bumped `reqwest` from 0.12 to 0.13 (`native-tls` to `rustls`).
+
+## [0.3.0] - 2026-02-25
+
+### Bug Fixes
+
+- Fix `--signature` doing word-level match instead of exact match (#1).
+  Search filters on string fields now correctly default to exact match.
+  Use `~` prefix for contains match (e.g. `--signature "~AudioDecoder"`).
+- Fix `--facet build_id` failing due to API returning integer terms.
+
+### New Features
+
+- Add `--date`, `--from`, `--to` date flags to `search` and `crash-pings`
+  commands (#2). Both commands now support flexible date ranges with inclusive
+  bounds. `crash-pings` supports multi-day queries with per-day caching.
+- Add `--proto-signature` filter to `search` command.
+
+## [0.2.1] - 2026-02-23
+
+### Fixes
+
+- Fix `cargo binstall` on Windows by adding zip format override.
+
+## [0.2.0] - 2026-02-20
+
+### New Commands
+
+- **`correlations`**: Show attributes that are statistically over-represented
+  in crashes with a given signature compared to the overall crash population.
+  Data comes from a pre-computed CDN (no API token needed).
+- **`crash-pings`**: Query Firefox opt-out crash ping telemetry from
+  crash-pings.mozilla.org (~1.7M/day vs ~40K/day for opt-in Socorro reports).
+  Supports filtering by channel, OS, process type, version, signature, and
+  architecture. Downloaded data is cached locally. Can also fetch symbolicated
+  stacks for individual crash pings.
+- **`auth`**: Manage API tokens via `auth login`, `auth logout`, and
+  `auth status`. Tokens are stored in the OS keychain (macOS Keychain, Windows
+  Credential Manager, Linux Secret Service), keeping them hidden from AI
+  agents. Falls back to `SOCORRO_API_TOKEN_PATH` for CI/headless environments.
+
+### New Search Filters
+
+- `--cpu-arch` — Filter by CPU architecture (amd64, x86, arm64, arm)
+- `--channel` — Filter by release channel (release, beta, nightly, esr,
+  aurora, default)
+- `--platform-version` — Filter by OS version string (supports `~` prefix for
+  contains match)
+- `--process-type` — Filter by process type (parent, content, gpu, rdd,
+  utility, socket, gmplugin, plugin)
+- `--facets-size` — Control how many facet buckets are returned (e.g., top N
+  signatures)
+
+### Improved Search Output
+
+- Search results now show full UUIDs, build ID, release channel, and platform
+  version.
+- `--limit` defaults to 0 when `--facet` is used (show only aggregations).
+
+### Security
+
+- JSON crash output (`--full` or `--format json`) now skips the API token so
+  the server strips all protected fields server-side — defense-in-depth against
+  accidental `view_pii` token permissions.
+
+### Other
+
+- Added `--version` / `-V` flag.
+- Comprehensive `--help` text with examples for all commands.
+- 96 unit tests (up from 0).
+- Added MPL 2.0 license file and source headers.
+- Added CONTRIBUTING.md and Data and Privacy section to README.
+
+### Breaking Changes
+
+- Removed unimplemented `--modules` flag from the `crash` command.
+
+## [0.1.1] - 2026-02-06
+
+Initial release on crates.io.
+
+- **`crash` command**: Fetch processed crash details by ID or full Socorro URL.
+  Compact (token-optimized), JSON, and Markdown output formats. `--depth` to
+  control stack trace depth, `--full` for complete JSON dump, `--all-threads`
+  for multi-thread analysis (deadlock debugging).
+- **`search` command**: Query Socorro SuperSearch with filters (`--signature`,
+  `--product`, `--version`, `--platform`, `--days`, `--sort`, `--limit`) and
+  facet aggregations (`--facet`).
+- Cross-platform binaries for Linux x86_64, macOS (x86_64 + ARM64), and
+  Windows x86_64. Installable via `cargo install` or `cargo binstall`.

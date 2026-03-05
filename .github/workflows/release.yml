@@ -92,6 +92,16 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo 'body<<EOF' >> "$GITHUB_OUTPUT"
+          awk "/^## \[${version}\]/{found=1; next} /^## \[/{if(found) exit} found" CHANGELOG.md >> "$GITHUB_OUTPUT"
+          echo 'EOF' >> "$GITHUB_OUTPUT"
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -103,4 +113,4 @@ jobs:
           files: |
             socorro-cli-*.tar.gz
             socorro-cli-*.zip
-          generate_release_notes: true
+          body: ${{ steps.changelog.outputs.body }}
