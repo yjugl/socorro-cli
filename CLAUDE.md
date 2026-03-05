@@ -50,7 +50,7 @@ cargo clippy
 
 **Important — after every code change, run the full check sequence before committing:**
 
-1. **Update documentation**: Update `--help` text (clap attributes in `src/main.rs`) and this `CLAUDE.md` file to reflect any new or changed commands, flags, or behaviors.
+1. **Update documentation**: Update `--help` text (clap attributes in `src/main.rs`), `README.md`, and this `CLAUDE.md` file to reflect any new or changed commands, flags, or behaviors.
 2. **Format**: `cargo fmt`
 3. **Lint**: `cargo clippy` — fix any warnings.
 4. **Test**: `cargo test` — all tests must pass.
