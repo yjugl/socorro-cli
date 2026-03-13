@@ -68,18 +68,24 @@ jobs:
       - name: Build
         run: ${{ matrix.use_cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
 
+      - name: Generate third-party licenses
+        run: |
+          cargo install cargo-about
+          cargo about generate about.hbs > THIRD-PARTY-LICENSES.txt
+
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../socorro-cli-${{ matrix.target }}.tar.gz socorro-cli
+          cp ../../../LICENSE ../../../THIRD-PARTY-LICENSES.txt .
+          tar czf ../../../socorro-cli-${{ matrix.target }}.tar.gz socorro-cli LICENSE THIRD-PARTY-LICENSES.txt
           cd ../../..
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/socorro-cli.exe -DestinationPath socorro-cli-${{ matrix.target }}.zip
+          Compress-Archive -Path target/${{ matrix.target }}/release/socorro-cli.exe,LICENSE,THIRD-PARTY-LICENSES.txt -DestinationPath socorro-cli-${{ matrix.target }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

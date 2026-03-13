@@ -1,5 +1,6 @@
 /target/
 /socorro/
+/THIRD-PARTY-LICENSES.txt
 
 # Claude Code local files (personal, not shared)
 .claude/settings.local.json
