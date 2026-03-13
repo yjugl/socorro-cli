@@ -661,19 +661,27 @@ enum AuthAction {
 }
 
 fn main() -> Result<()> {
-    let version_checker =
-        moz_cli_version_check::VersionChecker::new("socorro-cli", env!("CARGO_PKG_VERSION"));
+    let version_checker = moz_cli_version_check::VersionChecker::new(
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+    );
     version_checker.check_async();
 
-    let result = run();
-
-    version_checker.print_warning();
-
-    result
+    match Cli::try_parse() {
+        Ok(cli) => {
+            let result = run(cli);
+            version_checker.print_warning();
+            result
+        }
+        Err(e) => {
+            let _ = e.print();
+            version_checker.print_warning();
+            std::process::exit(e.exit_code());
+        }
+    }
 }
 
-fn run() -> Result<()> {
-    let cli = Cli::parse();
+fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Auth { action } => match action {
             AuthAction::Login => socorro_cli::commands::auth::login()?,
