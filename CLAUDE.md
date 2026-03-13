@@ -65,6 +65,8 @@ cargo clippy
 
 followed by a blank line before any code. Do not omit this header from any new file.
 
+**License compatibility**: When adding, updating, or enabling a new feature on a dependency, run `cargo tree --format "{p} {l}" --prefix none` and verify that no new license is incompatible with MPL-2.0. In particular, reject GPL/LGPL/AGPL dependencies. All current dependencies are permissive (MIT, Apache-2.0, ISC, BSD-3-Clause, BSL-1.0, Zlib, etc.) — keep it that way. If in doubt, flag the license for review before committing.
+
 ## Architecture
 
 ### Module Structure
