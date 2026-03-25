@@ -151,6 +151,11 @@ fn format_modules(summary: &CrashSummary, mode: ModulesMode) -> String {
                 .collect()
         }
         ModulesMode::Full => summary.modules.iter().collect(),
+        ModulesMode::ThirdParty => summary
+            .modules
+            .iter()
+            .filter(|m| m.is_third_party())
+            .collect(),
         ModulesMode::None => unreachable!(),
     };
 
@@ -158,6 +163,7 @@ fn format_modules(summary: &CrashSummary, mode: ModulesMode) -> String {
         return String::new();
     }
 
+    let show_cert = mode == ModulesMode::ThirdParty;
     let mut out = String::new();
     out.push_str("\nmodules:\n");
     for m in &modules {
@@ -165,10 +171,18 @@ fn format_modules(summary: &CrashSummary, mode: ModulesMode) -> String {
         let debug_file = m.debug_file.as_deref().unwrap_or("?");
         let debug_id = m.debug_id.as_deref().unwrap_or("?");
         let code_id = m.code_id.as_deref().unwrap_or("?");
-        out.push_str(&format!(
-            "  {} {} | {} | {} | {}\n",
-            m.filename, version, debug_file, debug_id, code_id
-        ));
+        if show_cert {
+            let cert = m.cert_subject.as_deref().unwrap_or("unsigned");
+            out.push_str(&format!(
+                "  {} {} | {} | {} | {} | {}\n",
+                m.filename, version, debug_file, debug_id, code_id, cert
+            ));
+        } else {
+            out.push_str(&format!(
+                "  {} {} | {} | {} | {}\n",
+                m.filename, version, debug_file, debug_id, code_id
+            ));
+        }
     }
     out
 }
@@ -252,6 +266,7 @@ mod tests {
                     debug_id: Some("F51BCD2A".to_string()),
                     code_id: Some("69934c4b".to_string()),
                     version: Some("148.0.0.3".to_string()),
+                    cert_subject: Some("Mozilla Corporation".to_string()),
                 },
                 ModuleInfo {
                     filename: "ntdll.dll".to_string(),
@@ -259,6 +274,7 @@ mod tests {
                     debug_id: Some("180BF1B9".to_string()),
                     code_id: Some("7ec9c15d".to_string()),
                     version: Some("6.2.19041.6456".to_string()),
+                    cert_subject: Some("Microsoft Windows".to_string()),
                 },
                 ModuleInfo {
                     filename: "mozglue.dll".to_string(),
@@ -266,6 +282,7 @@ mod tests {
                     debug_id: Some("AABBCCDD".to_string()),
                     code_id: Some("abc123".to_string()),
                     version: Some("148.0".to_string()),
+                    cert_subject: Some("Mozilla Corporation".to_string()),
                 },
             ],
         }
@@ -408,6 +425,53 @@ mod tests {
         assert!(output.contains("xul.dll"));
         // ntdll.dll is NOT in any thread frame
         assert!(!output.contains("ntdll.dll"));
+    }
+
+    fn sample_crash_summary_with_third_party_modules() -> CrashSummary {
+        let mut summary = sample_crash_summary_with_modules();
+        summary.modules.push(ModuleInfo {
+            filename: "TmUmEvt64.dll".to_string(),
+            debug_file: Some("TmUmEvt64.pdb".to_string()),
+            debug_id: Some("F23993AD".to_string()),
+            code_id: Some("696770e5".to_string()),
+            version: Some("8.55.0.1429".to_string()),
+            cert_subject: Some("Trend Micro, Inc.".to_string()),
+        });
+        summary.modules.push(ModuleInfo {
+            filename: "unknown.dll".to_string(),
+            debug_file: None,
+            debug_id: None,
+            code_id: None,
+            version: None,
+            cert_subject: None,
+        });
+        summary
+    }
+
+    #[test]
+    fn test_format_crash_modules_third_party() {
+        let summary = sample_crash_summary_with_third_party_modules();
+        let output = format_crash(&summary, ModulesMode::ThirdParty);
+
+        assert!(output.contains("modules:"));
+        // Third-party signed module should appear with cert info
+        assert!(output.contains("TmUmEvt64.dll 8.55.0.1429"));
+        assert!(output.contains("Trend Micro, Inc."));
+        // Unsigned module should appear
+        assert!(output.contains("unknown.dll"));
+        assert!(output.contains("unsigned"));
+        // Mozilla and Microsoft modules should NOT appear
+        assert!(!output.contains("xul.dll"));
+        assert!(!output.contains("ntdll.dll"));
+        assert!(!output.contains("mozglue.dll"));
+    }
+
+    #[test]
+    fn test_format_crash_modules_third_party_all_first_party() {
+        // When all modules are Mozilla/Microsoft, third-party shows nothing
+        let summary = sample_crash_summary_with_modules();
+        let output = format_crash(&summary, ModulesMode::ThirdParty);
+        assert!(!output.contains("modules:"));
     }
 
     #[test]

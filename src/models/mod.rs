@@ -19,4 +19,5 @@ pub enum ModulesMode {
     None,
     Stack,
     Full,
+    ThirdParty,
 }

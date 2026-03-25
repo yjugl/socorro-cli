@@ -28,6 +28,15 @@ pub fn execute(
     let use_auth = !full && format != OutputFormat::Json;
     let crash = client.get_crash(crash_id, use_auth)?;
 
+    if modules_mode == ModulesMode::ThirdParty {
+        let os = crash.os_name.as_deref().unwrap_or("");
+        if !os.starts_with("Windows") {
+            return Err(crate::Error::UnsupportedOption(
+                "--modules third-party is only supported on Windows crashes (cert_subject is not available on other platforms)".to_string(),
+            ));
+        }
+    }
+
     let output = if full {
         json::format_crash(&crash)?
     } else {

@@ -40,4 +40,7 @@ pub enum Error {
 
     #[error("Keyring error: {0}")]
     Keyring(String),
+
+    #[error("{0}")]
+    UnsupportedOption(String),
 }

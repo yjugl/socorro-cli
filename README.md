@@ -259,7 +259,7 @@ Formatted output for documentation and chat interfaces.
 - `--depth <N>`: Stack trace depth [default: 10]
 - `--full`: Output complete crash data without omissions (forces JSON format)
 - `--all-threads`: Show stacks from all threads (useful for diagnosing deadlocks)
-- `--modules <MODE>`: Which modules to list: `none`, `stack` (modules in displayed frames), `full` (all loaded modules) [default: stack]
+- `--modules <MODE>`: Which modules to list: `none`, `stack` (modules in displayed frames), `full` (all loaded modules), `third-party` (Windows only: not signed by Mozilla or Microsoft) [default: stack]
 
 ### Bugs Options
 - `--signature <SIG>`: Crash signature(s) to look up bugs for (repeatable)

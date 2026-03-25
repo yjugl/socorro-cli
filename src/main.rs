@@ -112,6 +112,9 @@ EXAMPLES:
     # Show all loaded modules (for compatibility/environment analysis)
     socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --modules full
 
+    # Show only third-party modules (not signed by Mozilla or Microsoft)
+    socorro-cli crash 5ec89bc3-404d-4689-a5f3-54fb00260318 --modules third-party
+
     # Get full JSON data
     socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --full
 
@@ -122,6 +125,10 @@ MODULES:
     provides exactly what 'symdis disasm' needs for disassembly.
     Use 'full' to list ALL loaded modules (can be 38-481 depending on platform).
     Use 'none' to omit the modules section entirely.
+    Use 'third-party' (WINDOWS CRASHES ONLY) to list only modules not signed
+    by Mozilla or Microsoft — useful for identifying injected DLLs from antivirus,
+    DRM, etc. This relies on Authenticode cert_subject, which is only present in
+    Windows crash reports.
     --modules only applies to compact and markdown output; --full already
     dumps everything as raw JSON.
 
@@ -484,7 +491,7 @@ EXAMPLES:
         #[arg(long)]
         all_threads: bool,
 
-        /// Which modules to list: none, stack (modules in displayed frames), or full (all loaded modules)
+        /// Which modules to list: none, stack, full (all platforms), or third-party (Windows only — filters out modules signed by Mozilla or Microsoft; errors on non-Windows crashes)
         #[arg(long, value_enum, default_value = "stack")]
         modules: ModulesMode,
     },
