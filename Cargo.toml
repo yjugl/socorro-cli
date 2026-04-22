@@ -6,6 +6,14 @@ license = "MPL-2.0"
 description = "A Rust CLI tool for querying Mozilla's Socorro crash reporting system, optimized for LLM coding agents"
 repository = "https://github.com/yjugl/socorro-cli"
 authors = ["Paul Adenot <paul@paul.cx>", "Yannis Juglaret <yjuglaret@mozilla.com>"]
+include = [
+    "/src/**/*.rs",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+]
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.{ archive-format }"

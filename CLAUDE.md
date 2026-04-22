@@ -55,6 +55,7 @@ cargo clippy
 2. **Format**: `cargo fmt`
 3. **Lint**: `cargo clippy` — fix any warnings.
 4. **Test**: `cargo test` — all tests must pass.
+5. **Verify packaging `include` is complete**: After any significant change (new source file outside `src/`, new top-level asset referenced at build time such as a `build.rs`/`include_str!`/`include_bytes!` target, new test/bench/example directory, or renamed top-level file), run `cargo package --allow-dirty` and confirm the verification step compiles successfully against the extracted tarball in `target/package/`. The `include` directive in `Cargo.toml` is a strict allowlist — anything not listed is silently dropped from the published crate, and missing files will only surface as a build failure on the first downstream user. Add new required paths to `include` before publishing.
 
 **License header requirement:** Every new `.rs` source file must include the MPL 2.0 header as the very first lines:
 
