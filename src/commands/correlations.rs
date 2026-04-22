@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use std::fmt::Write;
+
 use reqwest::StatusCode;
 use sha1::{Digest, Sha1};
 
@@ -15,7 +17,12 @@ const CDN_BASE: &str =
 pub fn signature_hash(sig: &str) -> String {
     let mut hasher = Sha1::new();
     hasher.update(sig.as_bytes());
-    format!("{:x}", hasher.finalize())
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest.iter() {
+        write!(out, "{:02x}", byte).unwrap();
+    }
+    out
 }
 
 fn fetch_totals(client: &reqwest::blocking::Client) -> Result<CorrelationsTotals> {
