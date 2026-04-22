@@ -124,7 +124,7 @@ fn aggregate(
         .into_iter()
         .map(|(k, (count, ids))| (k, count, ids))
         .collect();
-    items.sort_by(|a, b| b.1.cmp(&a.1));
+    items.sort_by_key(|item| std::cmp::Reverse(item.1));
     items.truncate(limit);
 
     let items = items
