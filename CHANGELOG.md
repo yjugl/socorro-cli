@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-04-22
+
+### New Features
+
+- **`--modules third-party` mode**: New mode for `crash --modules` that uses
+  the Authenticode `cert_subject` field to show only modules not signed by
+  Mozilla or Microsoft. Useful for identifying injected DLLs (antivirus, DRM,
+  printer drivers, etc.) in Windows crash reports. Windows only — returns an
+  error for non-Windows crashes since `cert_subject` is not available on
+  Linux/macOS.
+
+### Internal
+
+- Switched `Cargo.toml` from `exclude` to `include` for packaging — the
+  published crate tarball now uses an explicit allowlist of shipped files.
+- Fixed Rust 1.95.0 clippy warnings.
+- Bumped `clap`, `moz-cli-version-check`, `sha1`, and `tempfile`.
+
 ## [0.5.2] - 2026-03-13
 
 ### Fixes
