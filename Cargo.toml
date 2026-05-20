@@ -28,7 +28,7 @@ pkg-fmt = "zip"
 
 [features]
 default = ["secret-service"]
-secret-service = ["keyring/sync-secret-service"]
+secret-service = ["dep:dbus-secret-service-keyring-store"]
 
 [[bin]]
 name = "socorro-cli"
@@ -48,8 +48,17 @@ chrono = "0.4"
 moz-cli-version-check = "0.2"
 dirs = "6"
 sha1 = "0.11"
-keyring = { version = "3", features = ["windows-native", "apple-native"] }
+keyring-core = "1"
 rpassword = "7"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", default-features = false, features = ["keychain"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service-keyring-store = { version = "1", default-features = false, features = ["crypto-rust"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

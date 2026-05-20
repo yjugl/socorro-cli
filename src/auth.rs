@@ -7,6 +7,31 @@ use crate::{Error, Result};
 const SERVICE_NAME: &str = "socorro-cli";
 const TOKEN_KEY: &str = "api-token";
 
+/// Registers the platform-appropriate credential store as the default for
+/// `keyring_core`, once per process. If no store is available for the current
+/// platform/feature combination (e.g. Linux without the `secret-service`
+/// feature, as in musl release builds), this is a no-op and subsequent
+/// `Entry` calls will return `Error::NoDefaultStore`, which callers treat as
+/// "no keychain available" (the same behavior as keyring v3 with no backend).
+fn init_store() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        #[cfg(target_os = "windows")]
+        if let Ok(store) = windows_native_keyring_store::Store::new() {
+            keyring_core::set_default_store(store);
+        }
+        #[cfg(target_os = "macos")]
+        if let Ok(store) = apple_native_keyring_store::keychain::Store::new() {
+            keyring_core::set_default_store(store);
+        }
+        #[cfg(all(target_os = "linux", feature = "secret-service"))]
+        if let Ok(store) = dbus_secret_service_keyring_store::Store::new() {
+            keyring_core::set_default_store(store);
+        }
+    });
+}
+
 /// Environment variable pointing to a file containing the API token.
 /// Used for CI/headless environments where no system keychain is available.
 /// The file should be stored in a location that AI agents cannot read
@@ -36,10 +61,11 @@ fn get_from_token_file() -> Option<String> {
 }
 
 fn get_from_keychain() -> Option<String> {
-    match keyring::Entry::new(SERVICE_NAME, TOKEN_KEY) {
+    init_store();
+    match keyring_core::Entry::new(SERVICE_NAME, TOKEN_KEY) {
         Ok(entry) => match entry.get_password() {
             Ok(password) => Some(password),
-            Err(keyring::Error::NoEntry) => None,
+            Err(keyring_core::error::Error::NoEntry) => None,
             Err(_) => None,
         },
         Err(_) => None,
@@ -48,13 +74,11 @@ fn get_from_keychain() -> Option<String> {
 
 /// Returns detailed status for debugging keychain issues.
 pub fn get_keychain_status() -> KeychainStatus {
-    match keyring::Entry::new(SERVICE_NAME, TOKEN_KEY) {
+    init_store();
+    match keyring_core::Entry::new(SERVICE_NAME, TOKEN_KEY) {
         Ok(entry) => match entry.get_password() {
             Ok(_) => KeychainStatus::HasToken,
-            Err(e) => {
-                // Show all errors for debugging
-                KeychainStatus::Error(format!("get_password failed: {:?}", e))
-            }
+            Err(e) => KeychainStatus::Error(format!("get_password failed: {:?}", e)),
         },
         Err(e) => KeychainStatus::Error(format!("Entry::new failed: {:?}", e)),
     }
@@ -69,7 +93,8 @@ pub enum KeychainStatus {
 
 /// Stores the API token in the system keychain.
 pub fn store_token(token: &str) -> Result<()> {
-    let entry = keyring::Entry::new(SERVICE_NAME, TOKEN_KEY)
+    init_store();
+    let entry = keyring_core::Entry::new(SERVICE_NAME, TOKEN_KEY)
         .map_err(|e| Error::Keyring(format!("Failed to create entry: {}", e)))?;
 
     entry
@@ -77,7 +102,7 @@ pub fn store_token(token: &str) -> Result<()> {
         .map_err(|e| Error::Keyring(format!("Failed to store: {}", e)))?;
 
     // Verify with a fresh entry (same instance may cache)
-    let verify_entry = keyring::Entry::new(SERVICE_NAME, TOKEN_KEY)
+    let verify_entry = keyring_core::Entry::new(SERVICE_NAME, TOKEN_KEY)
         .map_err(|e| Error::Keyring(format!("Failed to create verify entry: {}", e)))?;
 
     match verify_entry.get_password() {
@@ -93,11 +118,12 @@ pub fn store_token(token: &str) -> Result<()> {
 
 /// Removes the API token from the system keychain.
 pub fn delete_token() -> Result<()> {
-    let entry =
-        keyring::Entry::new(SERVICE_NAME, TOKEN_KEY).map_err(|e| Error::Keyring(e.to_string()))?;
+    init_store();
+    let entry = keyring_core::Entry::new(SERVICE_NAME, TOKEN_KEY)
+        .map_err(|e| Error::Keyring(e.to_string()))?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()), // Already deleted
+        Err(keyring_core::error::Error::NoEntry) => Ok(()), // Already deleted
         Err(e) => Err(Error::Keyring(e.to_string())),
     }
 }
