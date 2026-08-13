@@ -62,4 +62,4 @@ dbus-secret-service-keyring-store = { version = "1", default-features = false, f
 
 [dev-dependencies]
 tempfile = "3"
-serial_test = "3"
+serial_test = "4"
