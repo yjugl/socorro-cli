@@ -2,10 +2,22 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+//! Token-optimized plain-text formatters (the default output format).
+//!
+//! For a crash this emits the identity and metadata lines (`sig:`, `reason:`,
+//! `type:`, `product:`, ...), the crashing thread's stack (or every thread),
+//! and optionally the module list. The crash annotations gathered in
+//! [`CrashSummary`] are split in two: the cheap ones share the always-on
+//! `type:` line, while the verbose ones are rendered only by
+//! [`format_annotations`], which the caller appends on request.
+
 use crate::commands::crash_pings::format_frame_location;
 use crate::models::bugs::BugsSummary;
 use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
-use crate::models::{CorrelationsSummary, CrashSummary, ModulesMode, SearchResponse, StackFrame};
+use crate::models::{
+    AsyncShutdownTimeout, CorrelationsSummary, CrashSummary, ModulesMode, SearchResponse,
+    ShutdownCondition, StackFrame,
+};
 use std::collections::HashSet;
 
 fn format_function(frame: &StackFrame) -> String {
@@ -47,6 +59,8 @@ pub fn format_crash(summary: &CrashSummary, modules_mode: ModulesMode) -> String
             output.push_str(&format!("reason: {}\n", reason));
         }
     }
+
+    output.push_str(&format_type_line(summary));
 
     if let Some(moz_reason) = &summary.moz_crash_reason {
         output.push_str(&format!("moz_reason: {}\n", moz_reason));
@@ -187,11 +201,186 @@ fn format_modules(summary: &CrashSummary, mode: ModulesMode) -> String {
     out
 }
 
+/// Collapse an annotation onto a single line. Annotations arrive with
+/// surrounding whitespace — `app_notes` always begins with a newline — and can
+/// carry interior newlines, either of which would break the compact format's
+/// one-field-per-line contract.
+fn one_line(value: &str) -> String {
+    value
+        .split('\n')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The always-on `type:` line: report type, process, uptime, thread count and,
+/// when true, that this was a startup crash. Returns the empty string when the
+/// crash carries none of those, so no blank line is ever emitted.
+fn format_type_line(summary: &CrashSummary) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(report_type) = &summary.report_type {
+        parts.push(report_type.clone());
+    }
+    if let Some(process_type) = &summary.process_type {
+        parts.push(process_type.clone());
+    }
+    if let Some(uptime) = summary.uptime {
+        parts.push(format!("uptime {}s", uptime));
+    }
+    if let Some(thread_count) = summary.thread_count {
+        parts.push(format!("{} threads", thread_count));
+    }
+    // Only the true case carries information: the overwhelming majority of
+    // crashes are not startup crashes, so `startup_crash: false` is noise.
+    if summary.startup_crash == Some(true) {
+        parts.push("startup".to_string());
+    }
+
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("type: {}\n", parts.join(" | "))
+    }
+}
+
+/// One line for a shutdown condition's `state`. A JSON object becomes
+/// space-separated `key=value` pairs, which is shorter and easier to read than
+/// the raw JSON; anything else falls back to
+/// [`ShutdownCondition::state_display`].
+fn format_condition_state(condition: &ShutdownCondition) -> Option<String> {
+    let rendered = if let serde_json::Value::Object(map) = &condition.state {
+        map.iter()
+            .map(|(key, value)| match value {
+                serde_json::Value::String(s) => format!("{}={}", key, one_line(s)),
+                other => format!("{}={}", key, other),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        one_line(&condition.state_display()?)
+    };
+
+    Some(rendered).filter(|s| !s.is_empty())
+}
+
+/// The `shutdown:` sub-section: the phase that timed out, how many blockers
+/// were still pending, and one block per blocker. An unparseable annotation is
+/// emitted verbatim on the `shutdown:` line rather than dropped.
+fn format_shutdown_timeout(shutdown: &AsyncShutdownTimeout) -> String {
+    let data = match shutdown {
+        AsyncShutdownTimeout::Raw(raw) => {
+            let raw = one_line(raw);
+            return if raw.is_empty() {
+                String::new()
+            } else {
+                format!("  shutdown: {}\n", raw)
+            };
+        }
+        AsyncShutdownTimeout::Parsed(data) => data,
+    };
+
+    let noun = if data.conditions.len() == 1 {
+        "condition"
+    } else {
+        "conditions"
+    };
+    let mut out = format!(
+        "  shutdown: phase {}, {} {}\n",
+        data.phase,
+        data.conditions.len(),
+        noun
+    );
+
+    for condition in &data.conditions {
+        out.push_str(&format!("    - {}\n", one_line(&condition.name)));
+        if let Some(filename) = &condition.filename {
+            match condition.line_number {
+                Some(line) => out.push_str(&format!("      {}:{}\n", filename, line)),
+                None => out.push_str(&format!("      {}\n", filename)),
+            }
+        }
+        if let Some(state) = format_condition_state(condition) {
+            out.push_str(&format!("      {}\n", state));
+        }
+    }
+
+    out
+}
+
+/// The opt-in `annotations:` section, appended after the crash body when the
+/// caller asks for it. Absent annotations are omitted; when none of them is
+/// present the section still says so, so an agent can tell the difference
+/// between "nothing to report" and "the flag did nothing".
+pub fn format_annotations(summary: &CrashSummary) -> String {
+    let mut body = String::new();
+
+    if let Some(shutdown) = &summary.async_shutdown_timeout {
+        body.push_str(&format_shutdown_timeout(shutdown));
+    }
+
+    let inconsistencies = if summary.crash_inconsistencies.is_empty() {
+        None
+    } else {
+        Some(summary.crash_inconsistencies.join(", "))
+    };
+
+    let fields: Vec<(&str, Option<String>)> = vec![
+        (
+            "shutdown_progress",
+            summary.shutdown_progress.as_deref().map(one_line),
+        ),
+        (
+            "shutdown_reason",
+            summary.shutdown_reason.as_deref().map(one_line),
+        ),
+        (
+            "spin_event_loop",
+            summary.xpcom_spin_event_loop_stack.as_deref().map(one_line),
+        ),
+        ("app_notes", summary.app_notes.as_deref().map(one_line)),
+        (
+            "last_error",
+            summary.last_error_value.as_deref().map(one_line),
+        ),
+        ("crash_inconsistencies", inconsistencies),
+        (
+            "topmost_filenames",
+            summary.topmost_filenames.as_deref().map(one_line),
+        ),
+        (
+            "modules_in_stack",
+            summary.modules_in_stack.as_deref().map(one_line),
+        ),
+        (
+            "proto_signature",
+            summary.proto_signature.as_deref().map(one_line),
+        ),
+    ];
+
+    for (key, value) in fields {
+        match value {
+            Some(value) if !value.is_empty() => {
+                body.push_str(&format!("  {}: {}\n", key, value));
+            }
+            _ => {}
+        }
+    }
+
+    if body.is_empty() {
+        return "annotations: (none)\n".to_string();
+    }
+
+    format!("annotations:\n{}", body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::{
-        CrashHit, CrashSummary, FacetBucket, ModuleInfo, ModulesMode, ThreadSummary,
+        AsyncShutdownTimeoutData, CrashHit, CrashSummary, FacetBucket, ModuleInfo, ModulesMode,
+        ThreadSummary,
     };
     use std::collections::HashMap;
 
@@ -673,6 +862,293 @@ mod tests {
         };
         let output = format_correlations(&summary);
         assert!(output.contains("No correlations found."));
+    }
+
+    /// Shaped after crash b98bbb81-3ff6-4825-991f-6a0b30260901: a
+    /// parent-process shutdown hang with 64 threads that was *not* a startup
+    /// crash.
+    fn hang_summary() -> CrashSummary {
+        CrashSummary {
+            crash_id: "b98bbb81-3ff6-4825-991f-6a0b30260901".to_string(),
+            signature: "AsyncShutdownTimeout | profile-before-change".to_string(),
+            reason: Some("EXCEPTION_BREAKPOINT".to_string()),
+            address: Some("0x00007fffba3d2c6e".to_string()),
+            product: "Firefox".to_string(),
+            version: "157.0a1".to_string(),
+            platform: "Windows NT 10.0.26200".to_string(),
+            report_type: Some("hang".to_string()),
+            process_type: Some("parent".to_string()),
+            uptime: Some(2175),
+            startup_crash: Some(false),
+            thread_count: Some(64),
+            ..Default::default()
+        }
+    }
+
+    fn type_line(output: &str) -> Option<&str> {
+        output.lines().find(|line| line.starts_with("type: "))
+    }
+
+    #[test]
+    fn test_compact_crash_type_line_exact() {
+        let output = format_crash(&hang_summary(), ModulesMode::Stack);
+        assert_eq!(
+            type_line(&output),
+            Some("type: hang | parent | uptime 2175s | 64 threads")
+        );
+    }
+
+    #[test]
+    fn test_compact_crash_type_line_follows_reason() {
+        let output = format_crash(&hang_summary(), ModulesMode::Stack);
+        let lines: Vec<&str> = output.lines().collect();
+        let reason_idx = lines
+            .iter()
+            .position(|line| line.starts_with("reason: "))
+            .expect("reason line");
+        assert!(
+            lines[reason_idx + 1].starts_with("type: "),
+            "type line must follow reason, got {:?}",
+            lines[reason_idx + 1]
+        );
+    }
+
+    #[test]
+    fn test_compact_crash_type_line_follows_sig_without_reason() {
+        let mut summary = hang_summary();
+        summary.reason = None;
+        summary.address = None;
+        let output = format_crash(&summary, ModulesMode::Stack);
+        let lines: Vec<&str> = output.lines().collect();
+        assert!(lines[1].starts_with("sig: "), "got {:?}", lines[1]);
+        assert!(lines[2].starts_with("type: "), "got {:?}", lines[2]);
+    }
+
+    #[test]
+    fn test_compact_crash_type_line_absent_when_no_components() {
+        // The stock fixture has none of the five annotations, so no empty
+        // `type:` line may appear.
+        let output = format_crash(&sample_crash_summary(), ModulesMode::None);
+        assert_eq!(type_line(&output), None, "output was:\n{}", output);
+    }
+
+    #[test]
+    fn test_compact_crash_type_line_startup_crash() {
+        let mut summary = hang_summary();
+
+        summary.startup_crash = Some(true);
+        assert_eq!(
+            type_line(&format_crash(&summary, ModulesMode::None)),
+            Some("type: hang | parent | uptime 2175s | 64 threads | startup")
+        );
+
+        summary.startup_crash = Some(false);
+        assert_eq!(
+            type_line(&format_crash(&summary, ModulesMode::None)),
+            Some("type: hang | parent | uptime 2175s | 64 threads")
+        );
+
+        summary.startup_crash = None;
+        assert_eq!(
+            type_line(&format_crash(&summary, ModulesMode::None)),
+            Some("type: hang | parent | uptime 2175s | 64 threads")
+        );
+    }
+
+    #[test]
+    fn test_compact_crash_type_line_single_component() {
+        let summary = CrashSummary {
+            process_type: Some("content".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            type_line(&format_crash(&summary, ModulesMode::None)),
+            Some("type: content")
+        );
+    }
+
+    fn condition(
+        name: &str,
+        filename: Option<&str>,
+        line: Option<u64>,
+        state: serde_json::Value,
+    ) -> ShutdownCondition {
+        ShutdownCondition {
+            name: name.to_string(),
+            filename: filename.map(str::to_string),
+            line_number: line,
+            state,
+        }
+    }
+
+    /// Shaped after the same crash's `async_shutdown_timeout` blob.
+    fn annotated_summary() -> CrashSummary {
+        CrashSummary {
+            async_shutdown_timeout: Some(AsyncShutdownTimeout::Parsed(AsyncShutdownTimeoutData {
+                phase: "profile-before-change".to_string(),
+                conditions: vec![
+                    condition(
+                        "ServiceWorkerRegistrar: Flushing data",
+                        Some(
+                            "..\\..\\checkouts\\gecko\\dom\\serviceworkers\\ServiceWorkerRegistrar.cpp",
+                        ),
+                        Some(1566),
+                        serde_json::json!({"saveDataRunnableDispatched": false, "shuttingDown": false}),
+                    ),
+                    condition(
+                        "ASRouterStorage: flush pending writes",
+                        Some("resource:///modules/asrouter/ASRouterDefaultConfig.sys.mjs"),
+                        Some(50),
+                        serde_json::json!({"pending": 1}),
+                    ),
+                    condition(
+                        "ShieldRecipeClient: Cleaning up",
+                        Some("resource://normandy/lib/CleanupManager.sys.mjs"),
+                        Some(39),
+                        serde_json::json!("(none)"),
+                    ),
+                ],
+            })),
+            shutdown_progress: Some("profile-before-change".to_string()),
+            shutdown_reason: Some("AppClose".to_string()),
+            xpcom_spin_event_loop_stack: Some(
+                "default: AsyncShutdown Spinner for profile-before-change".to_string(),
+            ),
+            app_notes: Some("\n-L1000-W0000100-T1) DWrite? DWrite+ WR! WR+".to_string()),
+            last_error_value: Some("ERROR_SUCCESS".to_string()),
+            topmost_filenames: Some("mfbt/Assertions.h".to_string()),
+            modules_in_stack: Some("firefox.exe/77DFC624;xul.dll/87B0A0D5".to_string()),
+            proto_signature: Some("MOZ_Crash | Abort | NS_DebugBreak".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_compact_annotations_field_order() {
+        let output = format_annotations(&annotated_summary());
+        let keys: Vec<&str> = output
+            .lines()
+            .filter(|line| line.starts_with("  ") && !line.starts_with("    "))
+            .map(|line| line.trim_start().split(':').next().unwrap())
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "shutdown",
+                "shutdown_progress",
+                "shutdown_reason",
+                "spin_event_loop",
+                "app_notes",
+                "last_error",
+                "topmost_filenames",
+                "modules_in_stack",
+                "proto_signature",
+            ]
+        );
+        assert!(output.starts_with("annotations:\n"), "got {:?}", output);
+    }
+
+    #[test]
+    fn test_compact_annotations_none() {
+        assert_eq!(
+            format_annotations(&CrashSummary::default()),
+            "annotations: (none)\n"
+        );
+    }
+
+    #[test]
+    fn test_compact_annotations_shutdown_conditions() {
+        let output = format_annotations(&annotated_summary());
+        assert!(
+            output.contains("  shutdown: phase profile-before-change, 3 conditions\n"),
+            "got:\n{}",
+            output
+        );
+        assert!(
+            output.contains("    - ASRouterStorage: flush pending writes\n      resource:///modules/asrouter/ASRouterDefaultConfig.sys.mjs:50\n      pending=1\n"),
+            "got:\n{}",
+            output
+        );
+        // An object state renders as key=value pairs, not raw JSON.
+        assert!(
+            output.contains("      saveDataRunnableDispatched=false shuttingDown=false\n"),
+            "got:\n{}",
+            output
+        );
+        // A bare-string state falls back to state_display().
+        assert!(output.contains("      (none)\n"), "got:\n{}", output);
+    }
+
+    #[test]
+    fn test_compact_annotations_shutdown_condition_without_location() {
+        let summary = CrashSummary {
+            async_shutdown_timeout: Some(AsyncShutdownTimeout::Parsed(AsyncShutdownTimeoutData {
+                phase: "quit-application".to_string(),
+                conditions: vec![
+                    condition("No location", None, None, serde_json::Value::Null),
+                    condition("File only", Some("Foo.cpp"), None, serde_json::Value::Null),
+                ],
+            })),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_annotations(&summary),
+            "annotations:\n  shutdown: phase quit-application, 2 conditions\n    - No location\n    - File only\n      Foo.cpp\n"
+        );
+    }
+
+    #[test]
+    fn test_compact_annotations_shutdown_raw_verbatim() {
+        let summary = CrashSummary {
+            async_shutdown_timeout: Some(AsyncShutdownTimeout::Raw(
+                "not json at all {".to_string(),
+            )),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_annotations(&summary),
+            "annotations:\n  shutdown: not json at all {\n"
+        );
+    }
+
+    #[test]
+    fn test_compact_annotations_app_notes_leading_newline_produces_no_blank_line() {
+        let summary = CrashSummary {
+            app_notes: Some("\n-L1000-W0000100-T1) DWrite?\nsecond line".to_string()),
+            ..Default::default()
+        };
+        let output = format_annotations(&summary);
+        assert_eq!(
+            output,
+            "annotations:\n  app_notes: -L1000-W0000100-T1) DWrite? second line\n"
+        );
+        assert!(
+            !output.lines().any(|line| line.trim().is_empty()),
+            "blank line in:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_compact_annotations_crash_inconsistencies() {
+        // Empty is the common case and must not print a key.
+        let summary = CrashSummary {
+            last_error_value: Some("ERROR_SUCCESS".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_annotations(&summary),
+            "annotations:\n  last_error: ERROR_SUCCESS\n"
+        );
+
+        let summary = CrashSummary {
+            crash_inconsistencies: vec!["A".to_string(), "B".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            format_annotations(&summary),
+            "annotations:\n  crash_inconsistencies: A, B\n"
+        );
     }
 }
 
