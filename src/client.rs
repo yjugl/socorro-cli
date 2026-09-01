@@ -93,7 +93,13 @@ impl SocorroClient {
         auth::get_token()
     }
 
-    pub fn get_crash(&self, crash_id: &str, use_auth: bool) -> Result<ProcessedCrash> {
+    /// Fetch the body of `/ProcessedCrash/` for `crash_id` as text.
+    ///
+    /// Validates the crash ID, sends the request (attaching the `Auth-Token`
+    /// header only when `use_auth` is true and a token is available), and maps
+    /// non-`OK` statuses onto the same errors both `get_crash` and
+    /// `get_crash_raw` report.
+    fn fetch_processed_crash_body(&self, crash_id: &str, use_auth: bool) -> Result<String> {
         if !crash_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
             return Err(Error::InvalidCrashId(crash_id.to_string()));
         }
@@ -108,16 +114,34 @@ impl SocorroClient {
         let response = request.send()?;
 
         match response.status() {
-            StatusCode::OK => {
-                let text = response.text()?;
-                serde_json::from_str(&text).map_err(|e| {
-                    Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)]))
-                })
-            }
+            StatusCode::OK => Ok(response.text()?),
             StatusCode::NOT_FOUND => Err(Error::NotFound(crash_id.to_string())),
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
             _ => Err(Error::Http(response.error_for_status().unwrap_err())),
         }
+    }
+
+    pub fn get_crash(&self, crash_id: &str, use_auth: bool) -> Result<ProcessedCrash> {
+        let text = self.fetch_processed_crash_body(crash_id, use_auth)?;
+        serde_json::from_str(&text)
+            .map_err(|e| Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)])))
+    }
+
+    /// Fetch `/ProcessedCrash/` for `crash_id` as an untyped `serde_json::Value`.
+    ///
+    /// Unlike `get_crash`, which deserializes into `ProcessedCrash` and thereby
+    /// keeps only the fields that struct declares, this preserves every key the
+    /// server sent. The body is still parsed (not echoed verbatim), so a
+    /// malformed response yields `Error::ParseError` exactly as `get_crash` does.
+    ///
+    /// `use_auth` is honoured identically to `get_crash`: the `Auth-Token`
+    /// header is attached only when it is true and a token is available. Callers
+    /// that will emit JSON must pass `false` so the server strips protected
+    /// fields (registers, `mac_boot_args`, …) from `json_dump` server-side.
+    pub fn get_crash_raw(&self, crash_id: &str, use_auth: bool) -> Result<serde_json::Value> {
+        let text = self.fetch_processed_crash_body(crash_id, use_auth)?;
+        serde_json::from_str(&text)
+            .map_err(|e| Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)])))
     }
 
     pub fn get_bugs(&self, signatures: &[String]) -> Result<BugsResponse> {
@@ -382,6 +406,28 @@ mod tests {
         // This could be an injection attempt
         let client = test_client();
         let result = client.get_crash("abc123; DROP TABLE crashes;", true);
+        assert!(matches!(result, Err(Error::InvalidCrashId(_))));
+    }
+
+    #[test]
+    fn test_raw_invalid_crash_id_with_spaces() {
+        let client = test_client();
+        let result = client.get_crash_raw("invalid crash id", true);
+        assert!(matches!(result, Err(Error::InvalidCrashId(_))));
+    }
+
+    #[test]
+    fn test_raw_invalid_crash_id_with_special_chars() {
+        let client = test_client();
+        let result = client.get_crash_raw("abc123!@#$", true);
+        assert!(matches!(result, Err(Error::InvalidCrashId(_))));
+    }
+
+    #[test]
+    fn test_raw_invalid_crash_id_with_semicolon() {
+        // This could be an injection attempt
+        let client = test_client();
+        let result = client.get_crash_raw("abc123; DROP TABLE crashes;", true);
         assert!(matches!(result, Err(Error::InvalidCrashId(_))));
     }
 
