@@ -119,20 +119,23 @@ Fetch details about a specific crash by ID or URL:
 
 ```bash
 # Using crash ID
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901
 
 # Using full Socorro URL (copy-paste from browser)
-socorro-cli crash https://crash-stats.mozilla.org/report/index/247653e8-7a18-4836-97d1-42a720260120
+socorro-cli crash https://crash-stats.mozilla.org/report/index/b98bbb81-3ff6-4825-991f-6a0b30260901
 
-# Get full crash data without omissions
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --full
+# Get the API response verbatim as JSON
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --full
+
+# Add crash annotations (shutdown blockers, app notes, proto signature)
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
 
 # Limit stack trace depth
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --depth 5
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --depth 5
 
 # Different output formats
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --format markdown
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --format json
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --format markdown
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --format json
 ```
 
 ### Bugs Command
@@ -230,21 +233,38 @@ socorro-cli search --product Firefox --days 1 --sort -date --limit 10
 ### Compact (default)
 Token-optimized plain text format designed for LLMs:
 ```
-CRASH 247653e8-7a18-4836-97d1-42a720260120
-sig: mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
-reason: SIGSEGV / SEGV_MAPERR @ 0x0000000000000000
-moz_reason: MOZ_RELEASE_ASSERT(mTimeStretcher->Init())
-product: Fenix 147.0.1 (Android 36, SM-S918B 36 (REL))
-build: 20260116091309
-channel: release
+CRASH b98bbb81-3ff6-4825-991f-6a0b30260901
+sig: AsyncShutdownTimeout | profile-before-change | ASRouterStorage: flush pending writes,ServiceWorkerRegistrar: Flushing data,ShieldRecipeClient: Cleaning up
+reason: EXCEPTION_BREAKPOINT @ 0x00007fffba3d2c6e
+type: hang | parent | uptime 2175s | 64 threads
+moz_reason: [Parent 36236, Main Thread] ###!!! ABORT: file checkouts\gecko\dom\serviceworkers\ServiceWorkerRegistrar.cpp:1566
+abort: xpcom_runtime_abort(###!!! ABORT: file checkouts\gecko\dom\serviceworkers\ServiceWorkerRegistrar.cpp:1566)
+product: Firefox 157.0a1 (Windows NT 10.0.26200)
+build: 20260831193004
+channel: nightly
 
-stack[GraphRunner]:
-  #0 mozilla::AudioDecoderInputTrack::EnsureTimeStretcher() @ ...AudioDecoderInputTrack.cpp:...:624
-  #1 mozilla::AudioDecoderInputTrack::AppendTimeStretchedDataToSegment(...) @ ...AudioDecoderInputTrack.cpp:...:423
+stack[MainThread]:
+  #0 Abort(char const*) @ git:github.com/mozilla-firefox/firefox:xpcom/base/nsDebugImpl.cpp:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb:528
+  #1 NS_DebugBreak(unsigned int, char const*, char const*, char const*, int) @ git:github.com/mozilla-firefox/firefox:xpcom/base/nsDebugImpl.cpp:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb:511
+  #2 nsDebugImpl::Abort(char const*, int) @ git:github.com/mozilla-firefox/firefox:xpcom/base/nsDebugImpl.cpp:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb:127
+  #3 XPTC__InvokebyIndex() @ /builds/worker/workspace/obj-build/toolkit/library/build/Z:/builds/worker/checkouts/gecko/xpcom/reflect/xptcall/md/win32/xptcinvoke_asm_x86_64.asm:97
+  ...
+
+modules:
+  xul.dll 157.0.0.404 | xul.pdb | 87B0A0D5FAAC4E194C4C44205044422E1 | 6a960f5cacf2000
 ```
 
 ### JSON
-Full structured data for programmatic processing.
+For the `crash` command, `--full` and `--format json` print the
+`/ProcessedCrash/` API response **verbatim**, pretty-printed — not a filtered
+subset of it. Two things not to assume about the result:
+
+- **The set of keys is per-crash, not a fixed schema.** The Windows crash above
+  returns 85 top-level keys; two Linux nightly crashes returned 81 and 77. Do
+  not hard-code a key list — test for the keys you need.
+- **Key order is alphabetical**, not the order the server sent it in, because
+  `serde_json` is built without its `preserve_order` feature (its map is a
+  `BTreeMap`). No key is lost, only reordered.
 
 ### Markdown
 Formatted output for documentation and chat interfaces.
@@ -257,8 +277,9 @@ Formatted output for documentation and chat interfaces.
 
 ### Crash Options
 - `--depth <N>`: Stack trace depth [default: 10]
-- `--full`: Output complete crash data without omissions (forces JSON format)
+- `--full`: Print the API response verbatim as pretty-printed JSON (forces JSON format)
 - `--all-threads`: Show stacks from all threads (useful for diagnosing deadlocks)
+- `--annotations`: Add a crash annotations section — shutdown blockers, app notes, proto signature, and more. Opt-in because it costs extra output (2,665 → 4,834 bytes on the crash above). Silently ignored with `--full` or `--format json`, which already contain every annotation.
 - `--modules <MODE>`: Which modules to list: `none`, `stack` (modules in displayed frames), `full` (all loaded modules), `third-party` (Windows only: not signed by Mozilla or Microsoft) [default: stack]
 
 ### Bugs Options
@@ -314,64 +335,119 @@ All search filters default to exact match. `--signature`, `--proto-signature`, `
 
 ```bash
 # Quick crash lookup (compact format, default)
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901
 
 # Output:
-# CRASH 247653e8-7a18-4836-97d1-42a720260120
-# sig: mozilla::AudioDecoderInputTrack::EnsureTimeStretcher
-# reason: SIGSEGV / SEGV_MAPERR @ 0x0000000000000000
-# moz_reason: MOZ_RELEASE_ASSERT(mTimeStretcher->Init())
-# product: Fenix 147.0.1 (Android 36, SM-S918B 36 (REL))
-# build: 20260116091309
-# channel: release
+# CRASH b98bbb81-3ff6-4825-991f-6a0b30260901
+# sig: AsyncShutdownTimeout | profile-before-change | ASRouterStorage: flush pending writes,ServiceWorkerRegistrar: Flushing data,ShieldRecipeClient: Cleaning up
+# reason: EXCEPTION_BREAKPOINT @ 0x00007fffba3d2c6e
+# type: hang | parent | uptime 2175s | 64 threads
+# moz_reason: [Parent 36236, Main Thread] ###!!! ABORT: file checkouts\gecko\dom\serviceworkers\ServiceWorkerRegistrar.cpp:1566
+# abort: xpcom_runtime_abort(###!!! ABORT: file checkouts\gecko\dom\serviceworkers\ServiceWorkerRegistrar.cpp:1566)
+# product: Firefox 157.0a1 (Windows NT 10.0.26200)
+# build: 20260831193004
+# channel: nightly
 #
-# stack[GraphRunner]:
-#   #0 mozilla::AudioDecoderInputTrack::EnsureTimeStretcher() @ git:github.com/.../AudioDecoderInputTrack.cpp:...:624
-#   #1 mozilla::AudioDecoderInputTrack::AppendTimeStretchedDataToSegment(...) @ git:github.com/.../AudioDecoderInputTrack.cpp:...:423
+# stack[MainThread]:
+#   #0 Abort(char const*) @ git:github.com/mozilla-firefox/firefox:xpcom/base/nsDebugImpl.cpp:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb:528
+#   #1 NS_DebugBreak(unsigned int, char const*, char const*, char const*, int) @ git:github.com/mozilla-firefox/firefox:xpcom/base/nsDebugImpl.cpp:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb:511
+#   #2 nsDebugImpl::Abort(char const*, int) @ git:github.com/mozilla-firefox/firefox:xpcom/base/nsDebugImpl.cpp:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb:127
+#   #3 XPTC__InvokebyIndex() @ /builds/worker/workspace/obj-build/toolkit/library/build/Z:/builds/worker/checkouts/gecko/xpcom/reflect/xptcall/md/win32/xptcinvoke_asm_x86_64.asm:97
 #   ...
+#
+# modules:
+#   xul.dll 157.0.0.404 | xul.pdb | 87B0A0D5FAAC4E194C4C44205044422E1 | 6a960f5cacf2000
 
 # Copy-paste URL directly from browser
-socorro-cli crash https://crash-stats.mozilla.org/report/index/247653e8-7a18-4836-97d1-42a720260120
+socorro-cli crash https://crash-stats.mozilla.org/report/index/b98bbb81-3ff6-4825-991f-6a0b30260901
 
 # Show only top 3 frames for quick overview
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --depth 3
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --depth 3
 ```
 
 ### Deadlock and Multi-threading Issues
 
 ```bash
 # Show all thread stacks (useful for diagnosing deadlocks, race conditions)
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --all-threads --depth 5
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 2
 
-# Output shows all threads with the crashing thread marked:
-# stack[thread 0:la.firefox:tab7]:
-#   #0 ???
-#   ...
+# Output shows all 64 threads, with the crashing thread marked:
+# stack[thread 0:MainThread [CRASHING]]:
+#   #0 Abort(char const*) @ git:github.com/mozilla-firefox/firefox:xpcom/base/nsDebugImpl.cpp:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb:528
+#   #1 NS_DebugBreak(unsigned int, char const*, char const*, char const*, int) @ git:github.com/mozilla-firefox/firefox:xpcom/base/nsDebugImpl.cpp:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb:511
 #
-# stack[thread 49:GraphRunner [CRASHING]]:
-#   #0 mozilla::AudioDecoderInputTrack::EnsureTimeStretcher() @ ...
-#   #1 mozilla::AudioDecoderInputTrack::AppendTimeStretchedDataToSegment(...) @ ...
-#   ...
+# stack[thread 1:BrokerEvent]:
+#   #0 NtRemoveIoCompletion
+#   #1 GetQueuedCompletionStatus
 #
-# stack[thread 50:MediaDecoderSta]:
-#   #0 mozilla::SharedBuffer::Create(...) @ ...
+# stack[thread 2:COM MTA]:
+#   #0 ZwWaitForAlertByThreadId
+#   #1 RtlWaitOnAddress
 #   ...
 
-# All threads with minimal depth for overview
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --all-threads --depth 2
+# All threads with minimal depth for overview (5,062 bytes for 64 threads)
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 1
 ```
+
+### Crash Annotations
+
+`--annotations` adds a section of crash annotations. It is opt-in because it
+costs extra output — on this crash the compact form grows from 2,665 to 4,834
+bytes — so it is worth reaching for when the default output does not explain
+the crash, shutdown hangs being the obvious case.
+
+```bash
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
+
+# The default output, plus (values truncated here for brevity):
+# annotations:
+#   shutdown: phase profile-before-change, 3 conditions
+#     - ServiceWorkerRegistrar: Flushing data
+#       ..\..\..\..\checkouts\gecko\dom\serviceworkers\ServiceWorkerRegistrar.cpp:1566
+#       saveDataRunnableDispatched=false shuttingDown=false
+#     - ASRouterStorage: flush pending writes
+#       resource:///modules/asrouter/ASRouterDefaultConfig.sys.mjs:50
+#       pending=1
+#     - ShieldRecipeClient: Cleaning up
+#       resource://normandy/lib/CleanupManager.sys.mjs:39
+#       (none)
+#   shutdown_progress: profile-before-change
+#   shutdown_reason: AppClose
+#   spin_event_loop: default: AsyncShutdown Spinner for profile-before-change
+#   app_notes: -L1000-W0000100-T1) DWrite? DWrite+ WR! WR+ xpcom_runtime_abort(###!!! ABORT: file checkouts\gecko\dom\serviceworkers\ServiceWorkerRegistrar.cpp:1566)
+#   last_error: ERROR_SUCCESS
+#   topmost_filenames: git:github.com/mozilla-firefox/firefox:mfbt/Assertions.h:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb
+#   modules_in_stack: firefox.exe/77DFC624CE9E472E4C4C44205044422E1;kernel32.dll/1BFECEF3ECC283476A31E4461A4AD4F61;...
+#   proto_signature: MOZ_Crash | Abort | NS_PrintStackTrace | NS_DebugBreak | nsDebugImpl::Abort | XPTC__InvokebyIndex | ...
+```
+
+The `shutdown:` entry comes from the `async_shutdown_timeout` annotation, which
+the API delivers as a JSON document embedded in a JSON string. socorro-cli
+parses it into the shutdown phase plus one entry per blocking condition, each
+with its `file:line` and state; if it does not parse, the raw string is printed
+verbatim rather than dropped.
+
+Fields are printed in a fixed order and absent ones are omitted:
+`shutdown`, `shutdown_progress`, `shutdown_reason`, `spin_event_loop`,
+`app_notes`, `last_error`, `crash_inconsistencies`, `topmost_filenames`,
+`modules_in_stack`, `proto_signature`. When a crash has none of them the
+section reads `annotations: (none)`.
+
+`--annotations` is silently ignored (not an error) with `--full` or
+`--format json`, because those already contain every annotation the API
+returned.
 
 ### Output Formats
 
 ```bash
 # Markdown format for documentation or bug reports
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --format markdown
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --format markdown
 
 # JSON for programmatic processing
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --format json | jq '.signature'
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --format json | jq '.signature'
 
-# Full JSON dump without any omissions (includes all metadata)
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --full
+# The API response verbatim, pretty-printed (85 keys for this crash)
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --full
 ```
 
 ### Search and Aggregation
@@ -440,7 +516,7 @@ socorro-cli bugs --bug-id 1234567
 
 ```bash
 # Investigate a crash from triage
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --depth 15 --format markdown > crash-analysis.md
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --depth 15 --format markdown > crash-analysis.md
 
 # Quick signature search to find related crashes
 socorro-cli search --signature "~SpinEventLoopUntil" --days 30 --limit 10
@@ -456,6 +532,13 @@ socorro-cli bugs --signature "OOM | small"
 socorro-cli crash b7c998c8-d033-4cc7-a1fe-ce4240260224 --all-threads --depth 10 > deadlock-stacks.txt
 # 2. Review all thread stacks to identify lock holders and waiters
 
+# Shutdown hang investigation workflow
+# 1. Read the annotations to see which components blocked shutdown, and in which phase
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
+# 2. Each shutdown condition names a file:line — read that code to see what it waits on
+# 3. Confirm the blocker on the main thread's stack
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --depth 30
+
 # Check crash distribution across platforms
 socorro-cli search --signature "OOM | small" --facet platform --days 7
 ```
@@ -464,7 +547,7 @@ socorro-cli search --signature "OOM | small" --facet platform --days 7
 
 socorro-cli processes only **publicly available data** from Mozilla's crash reporting systems:
 
-- **Crash command**: Fetches processed crash data via the [Socorro API](https://crash-stats.mozilla.org/api/). The tool's data model (`ProcessedCrash`) only deserializes public fields — signature, product, version, OS, stack traces, and crash metadata. [Protected data](https://crash-stats.mozilla.org/documentation/protected_data_access/) fields (user comments, email addresses, URLs from annotations, exploitability ratings) are not captured even if the API returns them. When JSON output is requested (`--full` or `--format json`), the API token is intentionally skipped so the server strips all protected fields server-side — this is a defense-in-depth measure against human error (e.g., accidentally creating a token with `view_pii` permission) that prevents raw `json_dump` sub-fields (registers, mac_boot_args, etc.) from leaking through. **The primary safeguard is ensuring your token has no permissions** — always verify at [API Tokens](https://crash-stats.mozilla.org/api/tokens/).
+- **Crash command**: Fetches processed crash data via the [Socorro API](https://crash-stats.mozilla.org/api/). In compact and markdown output the tool's data model (`ProcessedCrash`) only deserializes public fields — signature, product, version, OS, stack traces, and crash metadata — so [protected data](https://crash-stats.mozilla.org/documentation/protected_data_access/) fields (user comments, email addresses, URLs from annotations, exploitability ratings) are not captured even if the API returns them. JSON output (`--full` or `--format json`) is a verbatim passthrough of the API response and so does **not** filter fields itself; instead the API token is intentionally skipped for those two modes, so the server strips all protected fields server-side before they ever reach the tool. This is a defense-in-depth measure against human error (e.g., accidentally creating a token with `view_pii` permission) that prevents raw `json_dump` sub-fields (registers, mac_boot_args, etc.) from leaking through. **The primary safeguard is ensuring your token has no permissions** — always verify at [API Tokens](https://crash-stats.mozilla.org/api/tokens/).
 - **Search command**: Requests only public columns (uuid, date, signature, product, version, platform, build_id, release_channel, platform_version).
 - **Bugs command**: Queries Socorro's public bug association endpoints, which map Bugzilla bugs to crash signatures.
 - **Correlations command**: Fetches pre-computed correlation data from a public CDN, not the Socorro API.

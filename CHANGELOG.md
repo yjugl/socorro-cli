@@ -2,6 +2,63 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### New Features
+
+- **`--annotations` flag for `crash`**: Adds a section of crash annotations to
+  compact and markdown output — the `async_shutdown_timeout` blocker list (with
+  each blocking condition's `file:line` and state), `shutdown_progress`,
+  `shutdown_reason`, `xpcom_spin_event_loop_stack`, `app_notes`,
+  `last_error_value`, `crash_inconsistencies`, `topmost_filenames`,
+  `modules_in_stack` and `proto_signature`. Absent fields are omitted; a crash
+  with none of them prints `annotations: (none)`. The flag is opt-in because it
+  roughly doubles the output (2,665 to 4,834 bytes on
+  `b98bbb81-3ff6-4825-991f-6a0b30260901`), and it is silently ignored with
+  `--full` or `--format json`, which already contain every annotation.
+- **Crash type line in default `crash` output**: Compact output gains one
+  always-on line combining report type, process type, uptime, thread count and
+  a `startup` marker for startup crashes, e.g.
+  `type: hang | parent | uptime 2175s | 64 threads`. Markdown gains the
+  equivalent bullets under `## Details`. This information changes how the rest
+  of the report reads and costs 48 bytes (2,617 to 2,665) on the crash above.
+
+### Fixes
+
+- **`--full` and `--format json` no longer drop most of the API response.**
+  Both re-serialized the internal `ProcessedCrash` struct, which declared only
+  16 of the 85 top-level keys the `/ProcessedCrash/` endpoint returns — so 69
+  keys were silently discarded, including `async_shutdown_timeout`, `app_notes`,
+  `proto_signature`, `thread_count`, `uptime` and `telemetry_environment`. JSON
+  output is now a verbatim passthrough of the response body, pretty-printed.
+  Two caveats: the key set is per-crash rather than a fixed schema (85 keys for
+  a Windows crash, 81 and 77 for two Linux ones), and key order is alphabetical
+  rather than the server's, because `serde_json` is built without its
+  `preserve_order` feature. No key is lost.
+
+### Behavior Changes
+
+- **`--modules third-party` on a non-Windows crash no longer fails when the
+  output is JSON.** Combined with `--full` or `--format json` it previously
+  exited 1 with `UnsupportedOption`; it now exits 0 and emits JSON. The OS
+  check reads a typed field that the raw passthrough does not populate, and
+  `--modules` is meaningless for JSON output in any case. Compact and markdown
+  output still report the error as before.
+
+### Internal
+
+- Added `src/models/annotations.rs`: `AsyncShutdownTimeout` (a `Parsed`/`Raw`
+  enum whose `parse()` never fails, falling back to the verbatim string for a
+  malformed or unexpectedly-shaped payload), `AsyncShutdownTimeoutData`,
+  `ShutdownCondition`, and two lenient scalar deserializers that tolerate a
+  number arriving as a string rather than failing the whole crash fetch.
+- Added regression tests for the invariant that JSON crash output skips the API
+  token, covering the full input matrix of `should_use_auth()`. The invariant
+  previously had no test coverage, and the raw passthrough makes it the only
+  thing keeping protected fields out of JSON output.
+- Removed the dead struct-serializing `json::format_crash` (a `pub` item
+  removed from the library crate).
+
 ## [0.6.0] - 2026-04-22
 
 ### New Features

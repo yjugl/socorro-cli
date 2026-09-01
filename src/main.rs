@@ -14,10 +14,13 @@ data, with output optimized for LLM agents.
 
 EXAMPLES:
     # Fetch a specific crash by ID
-    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901
 
     # Fetch a crash using a Socorro URL (copy-paste from browser)
-    socorro-cli crash https://crash-stats.mozilla.org/report/index/247653e8-...
+    socorro-cli crash https://crash-stats.mozilla.org/report/index/b98bbb81-...
+
+    # Add crash annotations (shutdown blockers, app notes, proto signature)
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
 
     # Search for crashes by signature
     socorro-cli search --signature \"OOM | small\"
@@ -93,30 +96,49 @@ const CRASH_ABOUT: &str = "\
 Fetch details about a specific crash from Socorro.
 
 The crash ID can be:
-  - A bare UUID: 247653e8-7a18-4836-97d1-42a720260120
-  - A full Socorro URL: https://crash-stats.mozilla.org/report/index/247653e8-...
+  - A bare UUID: b98bbb81-3ff6-4825-991f-6a0b30260901
+  - A full Socorro URL: https://crash-stats.mozilla.org/report/index/b98bbb81-...
 
 EXAMPLES:
     # Basic crash lookup (compact output, includes modules from stack)
-    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901
 
     # Show more stack frames
-    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --depth 20
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --depth 20
 
     # Show all threads (useful for deadlock analysis)
-    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --all-threads
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads
 
     # Hide modules section
-    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --modules none
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --modules none
 
     # Show all loaded modules (for compatibility/environment analysis)
-    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --modules full
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --modules full
 
     # Show only third-party modules (not signed by Mozilla or Microsoft)
     socorro-cli crash 5ec89bc3-404d-4689-a5f3-54fb00260318 --modules third-party
 
-    # Get full JSON data
-    socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120 --full
+    # Show crash annotations (shutdown blockers, app notes, proto signature)
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
+
+    # Diagnose a shutdown hang: annotations plus a deeper stack
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations --depth 20
+
+    # Get full JSON data (the API response verbatim)
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --full
+
+ANNOTATIONS:
+    --annotations adds a section of crash annotations to compact and markdown
+    output. It is opt-in because it costs extra output: on the crash above the
+    compact form grows from 2,665 to 4,834 bytes.
+    Fields shown, when present: shutdown (the async_shutdown_timeout blocker
+    list, with each condition's file:line and state), shutdown_progress,
+    shutdown_reason, spin_event_loop, app_notes, last_error,
+    crash_inconsistencies, topmost_filenames, modules_in_stack and
+    proto_signature. If none are present the section reads
+    'annotations: (none)'.
+    The flag is silently ignored with --full and --format json, which already
+    contain every annotation the API returned.
 
 MODULES:
     --modules controls which loaded modules are listed in the output.
@@ -130,7 +152,18 @@ MODULES:
     DRM, etc. This relies on Authenticode cert_subject, which is only present in
     Windows crash reports.
     --modules only applies to compact and markdown output; --full already
-    dumps everything as raw JSON.
+    dumps everything as raw JSON. Because of that, --modules third-party is
+    not rejected on a non-Windows crash when the output is JSON — it is simply
+    ignored. Compact and markdown still report an error.
+
+FULL OUTPUT:
+    --full (and --format json) print the /ProcessedCrash/ response verbatim,
+    pretty-printed. Two things not to assume about it:
+    The set of keys is per-crash, not a fixed schema — the reference Windows
+    crash above returns 85 top-level keys, while two Linux nightly crashes
+    returned 81 and 77. Do not hard-code a key list.
+    Key order is alphabetical rather than the server's order, because
+    serde_json is built without its 'preserve_order' feature. No key is lost.
 
 RATE LIMITS:
     --full and --format json skip the API token so the server strips protected
@@ -145,13 +178,15 @@ RATE LIMITS:
 OUTPUT FIELDS:
     sig         - Crash signature (identifies the crash type; often the crashing function, but can also be a category like \"OOM | small\" or \"shutdownhang | ...\")
     reason      - OS-level crash type and address (SIGSEGV, EXCEPTION_ACCESS_VIOLATION, etc.)
+    type        - Report type (crash/hang), process (parent/content/gpu/...), uptime, thread count, and 'startup' for a startup crash
     moz_reason  - MOZ_CRASH/MOZ_RELEASE_ASSERT message (Mozilla code intentionally triggered the crash)
     abort       - C/C++ abort() message (third-party or stdlib code called abort)
     product     - Product name and version (Firefox 120.0, Fenix 147.0.1, etc.)
     build       - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
     channel     - Release channel (release, beta, nightly, esr, aurora, default)
     stack       - Stack trace of the crashing thread
-    modules     - Loaded modules with debug info (controlled by --modules)";
+    modules     - Loaded modules with debug info (controlled by --modules)
+    annotations - Extra crash annotations (only with --annotations; see ANNOTATIONS above)";
 
 const SEARCH_ABOUT: &str = "\
 Search and aggregate crashes from Socorro.

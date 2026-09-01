@@ -10,6 +10,17 @@ Personal, machine-local notes (not checked in) live in `CLAUDE.local.md`:
 
 socorro-cli is a Rust CLI tool for querying Mozilla's Socorro crash reporting system. It's optimized for LLM coding agents with token-efficient output formats. The tool provides six main commands: `crash` (fetch individual crash details), `search` (search and aggregate crashes), `bugs` (look up Bugzilla bugs for crash signatures or vice versa), `correlations` (show over-represented attributes for a signature), `crash-pings` (query opt-out crash ping telemetry from crash-pings.mozilla.org), and `auth` (manage API token storage).
 
+The `crash` command's compact output always includes a `type:` line (report type, process type, uptime, thread count, and `startup` for a startup crash). `--annotations` opts into an additional section of crash annotations — shutdown blockers, app notes, proto signature and more — in compact and markdown output. `--full` / `--format json` emit the API response verbatim.
+
+**Example crash IDs in the docs expire.** Socorro drops processed crashes after roughly six months, but the exact cutoff moves and is not something you can compute from the date embedded in the UUID. Do not guess: as of 2026-09-01 an ID from mid-January 2026 had gone, while `b7c998c8-…-260224` — only five weeks younger — still resolved. Before editing or relying on any example invocation, verify each ID by fetching it:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  "https://crash-stats.mozilla.org/api/ProcessedCrash/?crash_id=<id>"
+```
+
+Replace only the IDs that actually return 404. Note that expired IDs legitimately remain in offline unit-test fixtures (URL parsing, deserialization) across `src/`, where liveness is irrelevant — leave those alone; only documentation examples and live invocations need a working ID.
+
 ## Build & Development Commands
 
 ```bash
@@ -20,9 +31,10 @@ cargo build
 cargo build --release
 
 # Run locally without installing
-cargo run -- crash 247653e8-7a18-4836-97d1-42a720260120
-cargo run -- crash 247653e8-7a18-4836-97d1-42a720260120 --modules none
-cargo run -- crash 247653e8-7a18-4836-97d1-42a720260120 --modules full
+cargo run -- crash b98bbb81-3ff6-4825-991f-6a0b30260901
+cargo run -- crash b98bbb81-3ff6-4825-991f-6a0b30260901 --modules none
+cargo run -- crash b98bbb81-3ff6-4825-991f-6a0b30260901 --modules full
+cargo run -- crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
 cargo run -- crash 5ec89bc3-404d-4689-a5f3-54fb00260318 --modules third-party
 cargo run -- search --signature "OOM | small"
 cargo run -- search --signature "OOM | small" --date 2026-02-20
@@ -38,7 +50,7 @@ cargo run -- crash-pings --from 2026-02-10 --to 2026-02-15
 cargo install --path .
 
 # Run with specific subcommand
-socorro-cli crash 247653e8-7a18-4836-97d1-42a720260120
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901
 socorro-cli search --signature "OOM | small"
 
 # API token is managed via keychain or token file (see Authentication section)
@@ -91,7 +103,7 @@ followed by a blank line before any code. Do not omit this header from any new f
   - Automatically retrieves auth token from keychain via `get_auth_header()`
 - **src/commands/**: Command implementations
   - **auth.rs**: Handles `auth login/logout/status` subcommands
-  - **crash.rs**: Handles crash fetching and output formatting (accepts `ModulesMode` for `--modules` flag)
+  - **crash.rs**: Handles crash fetching and output formatting (accepts `ModulesMode` for `--modules` and a bool for `--annotations`). Also home to `should_use_auth()`, the pure function deciding whether the API token is sent, and to the raw-JSON passthrough path
   - **search.rs**: Handles crash search and aggregation
   - **bugs.rs**: Handles `bugs` command, dispatches to `get_bugs()` or `get_signatures_by_bugs()` based on flags
   - **correlations.rs**: Fetches correlation data from CDN (not Socorro API), computes signature hash, handles CDN HTTP requests
@@ -101,7 +113,8 @@ followed by a blank line before any code. Do not omit this header from any new f
   - `read_cached()`: Read cached data by key
   - `write_cache()`: Write data to cache by key
 - **src/models/**: Data structures for Socorro API responses
-  - **processed_crash.rs**: `ProcessedCrash`, `Thread`, `CrashSummary` - crash data models. `CrashSummary` includes `modules: Vec<ModuleInfo>` extracted from `json_dump.modules`
+  - **processed_crash.rs**: `ProcessedCrash`, `Thread`, `CrashSummary` - crash data models. `CrashSummary` includes `modules: Vec<ModuleInfo>` extracted from `json_dump.modules`. Also carries the annotation fields: always-rendered ones (`report_type`, `process_type`, `uptime`, `startup_crash`, `thread_count`) and the opt-in ones behind `--annotations` (`async_shutdown_timeout`, `shutdown_progress`, `shutdown_reason`, `xpcom_spin_event_loop_stack`, `app_notes`, `last_error_value`, `crash_inconsistencies`, `topmost_filenames`, `modules_in_stack`, `proto_signature`)
+  - **annotations.rs**: `AsyncShutdownTimeout` (a `Parsed`/`Raw` enum), `AsyncShutdownTimeoutData` (phase + conditions), `ShutdownCondition` (name, `filename`, `line_number`, free-form `state`). Also home to the two lenient scalar deserializers, `deserialize_optional_u64` and `deserialize_optional_bool`, used by `ProcessedCrash`
   - **search.rs**: `SearchResponse`, `SearchParams`, `CrashHit`, `FacetBucket` - search data models. `SearchParams` includes filters: signature, proto_signature, product, version, platform, cpu_arch, release_channel, platform_version, process_type, date_from, date_to, limit, facets, facets_size, sort. `CrashHit` includes build_id, release_channel, and platform_version fields
   - **bugs.rs**: `BugsResponse`, `BugHit`, `BugsSummary`, `BugGroup` - bug association data models. `BugsResponse` is the raw API response; `BugsSummary` groups hits by bug ID with sorted signatures
   - **correlations.rs**: `CorrelationsTotals`, `CorrelationsResponse`, `CorrelationsSummary` - correlation data models
@@ -117,7 +130,7 @@ followed by a blank line before any code. Do not omit this header from any new f
 1. CLI parses arguments → creates `SocorroClient` (token retrieved automatically from keychain/file)
 2. Command dispatcher calls appropriate command module
 3. Command module:
-   - For crash: extracts crash ID from URL if needed → `client.get_crash()` → converts `ProcessedCrash` to `CrashSummary` (including modules from `json_dump.modules`) → formats output with `--modules` mode (none/stack/full/third-party)
+   - For crash: extracts crash ID from URL if needed → `client.get_crash()` → for `--full`/`--format json`, print the raw response body verbatim (pretty-printed) and stop; otherwise convert `ProcessedCrash` to `CrashSummary` (including modules from `json_dump.modules`, and parsing `async_shutdown_timeout`'s embedded JSON in `to_summary()`) → format output with the `--modules` mode (none/stack/full/third-party) and the `--annotations` flag
    - For search: resolves date params (`--date`, `--days`, `--from`/`--to`) into `date_from`/`date_to` → builds `SearchParams` → `client.search()` → formats `SearchResponse`
    - For bugs: calls `client.get_bugs()` or `client.get_signatures_by_bugs()` → converts `BugsResponse` to `BugsSummary` (grouped by bug ID) → formats output
    - For correlations: builds reqwest client with gzip → fetches totals + per-signature data from CDN → converts `CorrelationsResponse` to `CorrelationsSummary` → formats output
@@ -128,7 +141,18 @@ followed by a blank line before any code. Do not omit this header from any new f
 
 **Crash ID Extraction**: `crash` command accepts both bare IDs and full Socorro URLs (e.g., `https://crash-stats.mozilla.org/report/index/<uuid>`). The `extract_crash_id()` function extracts the UUID from URLs.
 
-**Two-Stage Model Conversion**: Raw API responses are deserialized into `ProcessedCrash`, then converted to `CrashSummary` which contains only display-relevant data at the requested depth. This separation keeps formatting logic simple and avoids processing unused data.
+**Two-Stage Model Conversion**: For compact and markdown output, raw API responses are deserialized into `ProcessedCrash`, then converted to `CrashSummary` which contains only display-relevant data at the requested depth. This separation keeps formatting logic simple and avoids processing unused data. JSON output bypasses both stages entirely (see "Raw JSON Passthrough" below), so `ProcessedCrash` is no longer the bottleneck it once was for `--full`.
+
+**Raw JSON Passthrough**: `--full` and `--format json` print the `/ProcessedCrash/` response body verbatim, pretty-printed, rather than re-serializing the `ProcessedCrash` struct. The struct is a *filter* — it declares far fewer fields than the API returns — so re-serializing silently dropped most of the response: originally 16 of the 85 top-level keys survived, losing exactly the ones shutdown-hang investigation needs (`async_shutdown_timeout`, `app_notes`, `proto_signature`, `thread_count`, `uptime`, `telemetry_environment`). Measured on `b98bbb81-3ff6-4825-991f-6a0b30260901`, the passthrough now emits **85 keys / 768,791 bytes**. Two consequences to keep in mind:
+
+- **The key set is per-crash, not a fixed schema.** The reference Windows crash yields 85 keys; two Linux nightly crashes yielded 81 and 77. Never hard-code a key list.
+- **Key order is alphabetical**, not the server's order, because `serde_json` is built without its `preserve_order` feature (its `Map` is a `BTreeMap`). No key is lost, only reordered.
+
+Because JSON output no longer goes through the typed model, options that depend on typed fields cannot be enforced on that path: `--modules third-party` on a non-Windows crash exits 0 and emits JSON (the flag is meaningless there) while compact and markdown still error with `UnsupportedOption`.
+
+**`async_shutdown_timeout` Parsing**: The API delivers this annotation as a JSON document embedded in a JSON *string*. `ProcessedCrash` keeps it as a plain `Option<String>` — deliberately, so the field round-trips untouched and the raw passthrough is unaffected — and `to_summary()` calls `AsyncShutdownTimeout::parse()` at the model boundary. `parse()` never fails: it requires a JSON *object* (serde will otherwise happily deserialize the struct from a JSON array by position, turning junk into a plausible-looking parse) and falls back to `AsyncShutdownTimeout::Raw(String)` for anything unexpected, so a malformed annotation is printed verbatim rather than dropped. Note that `AsyncShutdownTimeout` derives only `Debug, Clone`; it has no `Serialize`/`Deserialize` impl of its own.
+
+**Lenient Scalar Deserializers**: `deserialize_optional_u64` and `deserialize_optional_bool` (in `src/models/annotations.rs`) accept a value the API may send as a number, a numeric string, or (for bools) `true`/`false`/`yes`/`no`/`0`/`1` in any case. An unrecognized value yields `None` instead of failing. This matters because these deserializers sit on `ProcessedCrash`: a single oddly-typed annotation would otherwise abort the whole crash fetch rather than degrade one line of output.
 
 **Thread Handling**: Crash data includes multiple threads. The tool identifies the crashing thread via:
 1. `crashing_thread` field
@@ -141,7 +165,13 @@ With `--all-threads`, it formats all threads (marking the crashing one), useful 
 
 **Compact Format**: Default output format is designed to minimize tokens while preserving essential crash information. Uses abbreviations (sig, moz_reason) and omits field labels when clear from context.
 
+**Always-On Crash Type Line**: Compact output includes a single `type:` line combining `report_type`, `process_type`, `uptime`, `thread_count` and (only when `startup_crash` is true) `startup` — e.g. `type: hang | parent | uptime 2175s | 64 threads`. Markdown renders the same data as four bullets under `## Details`. This is unconditional because the cost is small and the information changes how every other line is read: measured on `b98bbb81-3ff6-4825-991f-6a0b30260901`, compact grew 2,617 → 2,665 bytes (+48) and markdown 2,871 → 2,972 (+101). Absent fields are omitted, so the line shrinks rather than printing placeholders.
+
+**Annotations Are Opt-In**: Everything else annotation-derived sits behind `--annotations`, which costs substantially more: 2,665 → 4,834 bytes on the same crash, most of it `proto_signature` and `modules_in_stack`. Compact prints an `annotations:` header followed by two-space-indented `key: value` lines in a fixed order (`shutdown`, `shutdown_progress`, `shutdown_reason`, `spin_event_loop`, `app_notes`, `last_error`, `crash_inconsistencies`, `topmost_filenames`, `modules_in_stack`, `proto_signature`), omitting absent fields, and prints exactly `annotations: (none)` when none are present. The flag is silently ignored (not an error) with `--full`/`--format json`, which already contain every annotation.
+
 **JSON Crash Output Skips Auth Token**: When `crash` output will be JSON (`--full` or `--format json`), the API token is not sent. Without a token, the server strips all protected fields (registers, mac_boot_args, etc. inside `json_dump`) server-side. This is a defense-in-depth measure against human error (e.g., accidentally creating a token with `view_pii` permission) — the primary safeguard is that users must create tokens with no permissions. Compact/markdown output is safe because `to_summary()` only extracts public sub-fields, so those formats still use the token for higher rate limits.
+
+This invariant is now load-bearing rather than incidental: since JSON output is a raw passthrough, skipping the token is the *only* thing keeping protected fields out of it. The decision is isolated in the pure function `should_use_auth(full: bool, format: OutputFormat) -> bool` in `src/commands/crash.rs`, and a test exercises its full input matrix. Any change to that function or to `get_crash`'s `use_auth` argument is a security-relevant change.
 
 **Facet-aware `--limit` default**: When `--facet` is used, `--limit` defaults to 0 (only aggregations shown). Without `--facet`, it defaults to 10. Users can override with `--limit N` to show individual crash rows alongside aggregations. `--facets-size` controls how many buckets each facet returns (e.g., top N signatures).
 
@@ -185,19 +215,22 @@ Run tests with:
 cargo test
 ```
 
-The test suite (144 tests) covers:
+The test suite (198 tests) covers:
 - **Crash ID extraction**: Bare IDs, full URLs, URLs with trailing slashes
-- **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode, module extraction from `json_dump.modules`
+- **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode, module extraction from `json_dump.modules`, annotation field extraction, and the lenient scalar deserializers (`deserialize_optional_u64`/`deserialize_optional_bool` accepting numbers, numeric strings and bool-ish strings, and yielding `None` rather than erroring on junk)
+- **Annotations model**: `AsyncShutdownTimeout::parse()` — phase and condition extraction, `filename`/`lineNumber` handling, object vs. string vs. missing `state`, polymorphic `stack` field, zero-condition payloads, and the `Raw` fallback for malformed or unexpectedly-shaped input (including a JSON array, which serde would otherwise deserialize positionally)
 - **Search models**: SearchResponse/CrashHit deserialization, facets parsing
 - **Bugs models**: Deserialization, `to_summary()` grouping by bug ID, signature sorting, empty response handling
 - **Correlations models**: Deserialization, `to_summary()` percentage calculations, `format_item_map()` for item display
 - **Crash pings models**: IndexedStrings/NullableIndexedStrings deserialization, accessor methods, filter matching (channel, OS, process, version, signature exact/contains, arch, combined), facet value resolution, stack response deserialization
 - **Crash pings command**: Aggregation by signature/OS, filtering, limit, percentage calculations, frame formatting, multi-response aggregation, date range generation
 - **Cache module**: Cache directory creation, read/write roundtrip, empty cache handling
-- **Output formatters**: Compact and Markdown formatters for crash (including `--modules` none/stack/full/third-party modes), search, bugs, correlations, and crash pings output
+- **Output formatters**: Compact and Markdown formatters for crash (including `--modules` none/stack/full/third-party modes and the always-on `type:` line), search, bugs, correlations, and crash pings output
+- **Annotations formatters**: The compact `annotations:` section — fixed field order, omission of absent fields, the `annotations: (none)` empty case, multi-line shutdown-condition rendering, and the markdown equivalent
 - **Module filtering**: `is_third_party()` cert_subject classification (Mozilla, Microsoft, third-party, unsigned)
 - **Client validation**: Crash ID format validation (rejects invalid characters, potential injection attempts)
 - **Auth token file**: Reading from `SOCORRO_API_TOKEN_PATH`, whitespace handling, missing file handling
+- **JSON auth invariant**: The full input matrix of `should_use_auth(full, format)`, asserting the token is skipped for `--full` and `--format json` and sent for compact/markdown. This guards the security invariant above, which the raw JSON passthrough makes load-bearing
 
 Note: HTTP-level tests (404, 429, network errors) would require mocking the reqwest client and are not currently implemented.
 
