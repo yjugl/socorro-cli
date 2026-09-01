@@ -494,6 +494,10 @@ EXAMPLES:
         /// Which modules to list: none, stack, full (all platforms), or third-party (Windows only — filters out modules signed by Mozilla or Microsoft; errors on non-Windows crashes)
         #[arg(long, value_enum, default_value = "stack")]
         modules: ModulesMode,
+
+        /// Show extra crash annotations: shutdown blockers, app notes, proto signature (adds output; ignored with --full or --format json, which already include them)
+        #[arg(long)]
+        annotations: bool,
     },
 
     /// Query Firefox crash pings (opt-out telemetry, representative sample)
@@ -772,6 +776,7 @@ fn run(cli: Cli) -> Result<()> {
             full,
             all_threads,
             modules,
+            annotations,
         } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
             socorro_cli::commands::crash::execute(
@@ -781,6 +786,7 @@ fn run(cli: Cli) -> Result<()> {
                 full,
                 all_threads,
                 modules,
+                annotations,
                 cli.format,
             )?;
         }

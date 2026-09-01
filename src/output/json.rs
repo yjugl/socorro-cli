@@ -5,21 +5,18 @@
 use crate::Result;
 use crate::models::bugs::BugsResponse;
 use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
-use crate::models::{CorrelationsResponse, ProcessedCrash, SearchResponse};
+use crate::models::{CorrelationsResponse, SearchResponse};
 
 pub fn format_bugs(response: &BugsResponse) -> Result<String> {
     Ok(serde_json::to_string_pretty(response)?)
 }
 
-pub fn format_crash(crash: &ProcessedCrash) -> Result<String> {
-    Ok(serde_json::to_string_pretty(crash)?)
-}
-
 /// Pretty-print a raw `/ProcessedCrash/` response verbatim.
 ///
-/// `format_crash` serializes the `ProcessedCrash` struct, so it emits only the
-/// fields that struct declares; this emits every key the server sent. Output is
-/// pretty-printed for consistency with every other formatter in this module.
+/// Emits every key the server sent, including the ones the `ProcessedCrash`
+/// struct does not declare and would therefore drop if it were serialized
+/// instead. Output is pretty-printed for consistency with every other formatter
+/// in this module.
 pub fn format_crash_raw(value: &serde_json::Value) -> Result<String> {
     Ok(serde_json::to_string_pretty(value)?)
 }
@@ -48,7 +45,7 @@ mod tests {
     /// keys the `ProcessedCrash` struct declares (`uuid`, `signature`) with keys
     /// it does not (`async_shutdown_timeout`, `app_notes`, `proto_signature`,
     /// `thread_count`, `uptime`, `telemetry_environment`), which are exactly the
-    /// ones the struct-serializing `format_crash` drops.
+    /// ones a formatter serializing that struct would drop.
     const RAW_FIXTURE: &str = r#"{
       "uuid": "b98bbb81-3ff6-4825-991f-6a0b30260901",
       "async_shutdown_timeout": "{\"phase\": \"profile-before-change\"}",
@@ -86,7 +83,7 @@ mod tests {
         assert_eq!(out_keys, in_keys);
         assert_eq!(out_keys.len(), 8);
 
-        // The keys `format_crash` would have dropped are all present verbatim.
+        // The keys serializing the struct would have dropped are all present.
         for key in [
             "async_shutdown_timeout",
             "app_notes",
