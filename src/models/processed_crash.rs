@@ -2,6 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use super::annotations::{
+    AsyncShutdownTimeout, deserialize_optional_bool, deserialize_optional_u64,
+};
 use super::{ModuleInfo, StackFrame, common::deserialize_string_or_number};
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +44,42 @@ pub struct ProcessedCrash {
     pub threads: Option<Vec<Thread>>,
     #[serde(default)]
     pub json_dump: Option<serde_json::Value>,
+
+    // Annotations rendered unconditionally.
+    #[serde(default)]
+    pub report_type: Option<String>,
+    #[serde(default)]
+    pub process_type: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub uptime: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_bool")]
+    pub startup_crash: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub thread_count: Option<u64>,
+
+    // Annotations rendered on request. `async_shutdown_timeout` is a JSON
+    // document embedded in a string; it is kept raw here and parsed in
+    // `to_summary()`.
+    #[serde(default)]
+    pub async_shutdown_timeout: Option<String>,
+    #[serde(default)]
+    pub shutdown_progress: Option<String>,
+    #[serde(default)]
+    pub shutdown_reason: Option<String>,
+    #[serde(default)]
+    pub xpcom_spin_event_loop_stack: Option<String>,
+    #[serde(default)]
+    pub app_notes: Option<String>,
+    #[serde(default)]
+    pub last_error_value: Option<String>,
+    #[serde(default)]
+    pub crash_inconsistencies: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    pub topmost_filenames: Option<String>,
+    #[serde(default)]
+    pub modules_in_stack: Option<String>,
+    #[serde(default)]
+    pub proto_signature: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -66,7 +105,7 @@ pub struct ThreadSummary {
     pub is_crashing: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CrashSummary {
     pub crash_id: String,
     pub signature: String,
@@ -88,9 +127,36 @@ pub struct CrashSummary {
     pub frames: Vec<StackFrame>,
     pub all_threads: Vec<ThreadSummary>,
     pub modules: Vec<ModuleInfo>,
+
+    // Annotations shown unconditionally.
+    pub report_type: Option<String>,
+    pub process_type: Option<String>,
+    pub uptime: Option<u64>,
+    pub startup_crash: Option<bool>,
+    pub thread_count: Option<u64>,
+
+    // Annotations shown on request. Always populated here; whether they are
+    // rendered is the formatter's decision.
+    pub async_shutdown_timeout: Option<AsyncShutdownTimeout>,
+    pub shutdown_progress: Option<String>,
+    pub shutdown_reason: Option<String>,
+    pub xpcom_spin_event_loop_stack: Option<String>,
+    pub app_notes: Option<String>,
+    pub last_error_value: Option<String>,
+    /// One display string per entry of `crash_inconsistencies`; empty when the
+    /// annotation is absent or its list is empty (the common case).
+    pub crash_inconsistencies: Vec<String>,
+    pub topmost_filenames: Option<String>,
+    pub modules_in_stack: Option<String>,
+    pub proto_signature: Option<String>,
 }
 
 impl ProcessedCrash {
+    /// Convert the raw API response into the display-relevant subset: crash
+    /// identity and metadata, the crashing thread's frames capped at `depth`
+    /// (plus every thread when `all_threads` is set), the module list, and the
+    /// crash annotations. Annotations are always populated; formatters decide
+    /// which of them to render.
     pub fn to_summary(&self, depth: usize, all_threads: bool) -> CrashSummary {
         let crashing_thread_idx = self
             .crashing_thread
@@ -157,6 +223,17 @@ impl ProcessedCrash {
 
         let crash_info = self.crash_info.as_ref().or(json_dump_crash_info.as_ref());
 
+        let crash_inconsistencies: Vec<String> = self
+            .crash_inconsistencies
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .collect();
+
         CrashSummary {
             crash_id: self.uuid.clone(),
             signature: self
@@ -191,6 +268,24 @@ impl ProcessedCrash {
             frames,
             all_threads: thread_summaries,
             modules,
+            report_type: self.report_type.clone(),
+            process_type: self.process_type.clone(),
+            uptime: self.uptime,
+            startup_crash: self.startup_crash,
+            thread_count: self.thread_count,
+            async_shutdown_timeout: self
+                .async_shutdown_timeout
+                .as_deref()
+                .map(AsyncShutdownTimeout::parse),
+            shutdown_progress: self.shutdown_progress.clone(),
+            shutdown_reason: self.shutdown_reason.clone(),
+            xpcom_spin_event_loop_stack: self.xpcom_spin_event_loop_stack.clone(),
+            app_notes: self.app_notes.clone(),
+            last_error_value: self.last_error_value.clone(),
+            crash_inconsistencies,
+            topmost_filenames: self.topmost_filenames.clone(),
+            modules_in_stack: self.modules_in_stack.clone(),
+            proto_signature: self.proto_signature.clone(),
         }
     }
 }
@@ -198,6 +293,196 @@ impl ProcessedCrash {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Field names, types and value shapes copied from the unauthenticated
+    /// `/ProcessedCrash/` response for the shutdown-hang crash
+    /// b98bbb81-3ff6-4825-991f-6a0b30260901 (`report_type=hang`,
+    /// `process_type=parent`, `uptime=2175`, `thread_count=64`).
+    fn annotated_crash_json() -> &'static str {
+        r#"{
+            "uuid": "b98bbb81-3ff6-4825-991f-6a0b30260901",
+            "signature": "shutdownhang | mozilla::SpinEventLoopUntil",
+            "report_type": "hang",
+            "process_type": "parent",
+            "uptime": 2175,
+            "startup_crash": false,
+            "thread_count": 64,
+            "async_shutdown_timeout": "{\"phase\":\"profile-before-change\",\"conditions\":[{\"name\":\"ServiceWorkerRegistrar: Flushing data\",\"state\":{\"saveDataRunnableDispatched\":false,\"shuttingDown\":false},\"filename\":\"..\\\\..\\\\checkouts\\\\gecko\\\\dom\\\\serviceworkers\\\\ServiceWorkerRegistrar.cpp\",\"lineNumber\":1566,\"stack\":\"ServiceWorkerRegistrar: Flushing data\"},{\"name\":\"ASRouterStorage: flush pending writes\",\"state\":{\"pending\":1},\"filename\":\"resource:///modules/asrouter/ASRouterDefaultConfig.sys.mjs\",\"lineNumber\":50,\"stack\":[\"resource:///modules/asrouter/ASRouterDefaultConfig.sys.mjs:createStorage:50\"]},{\"name\":\"ShieldRecipeClient: Cleaning up\",\"state\":\"(none)\",\"filename\":\"resource://normandy/lib/CleanupManager.sys.mjs\",\"lineNumber\":39,\"stack\":[\"resource://normandy/lib/CleanupManager.sys.mjs:cleanup:39\"]}]}",
+            "shutdown_progress": "profile-before-change",
+            "shutdown_reason": "AppClose",
+            "xpcom_spin_event_loop_stack": "default: AsyncShutdown Spinner for profile-before-change",
+            "app_notes": "FP(D00-L1000-W0000100-T1) DWrite? DWrite+ WR! WR+",
+            "last_error_value": "ERROR_SUCCESS",
+            "crash_inconsistencies": ["crashing thread mismatch"],
+            "topmost_filenames": "git:github.com/mozilla-firefox/firefox:mfbt/Assertions.h:9b794146",
+            "modules_in_stack": "firefox.exe/77DFC624;ntdll.dll/3D1FD1A7",
+            "proto_signature": "MOZ_Crash | Abort | NS_PrintStackTrace"
+        }"#
+    }
+
+    #[test]
+    fn test_deserialize_always_on_annotations() {
+        let crash: ProcessedCrash = serde_json::from_str(annotated_crash_json()).unwrap();
+        assert_eq!(crash.report_type, Some("hang".to_string()));
+        assert_eq!(crash.process_type, Some("parent".to_string()));
+        assert_eq!(crash.uptime, Some(2175));
+        assert_eq!(crash.startup_crash, Some(false));
+        assert_eq!(crash.thread_count, Some(64));
+    }
+
+    #[test]
+    fn test_deserialize_opt_in_annotations() {
+        let crash: ProcessedCrash = serde_json::from_str(annotated_crash_json()).unwrap();
+        assert_eq!(
+            crash.shutdown_progress,
+            Some("profile-before-change".to_string())
+        );
+        assert_eq!(crash.shutdown_reason, Some("AppClose".to_string()));
+        assert_eq!(
+            crash.xpcom_spin_event_loop_stack,
+            Some("default: AsyncShutdown Spinner for profile-before-change".to_string())
+        );
+        assert!(crash.app_notes.as_deref().unwrap().contains("DWrite?"));
+        assert_eq!(crash.last_error_value, Some("ERROR_SUCCESS".to_string()));
+        assert_eq!(crash.crash_inconsistencies.as_ref().unwrap().len(), 1);
+        assert!(
+            crash
+                .topmost_filenames
+                .as_deref()
+                .unwrap()
+                .contains("Assertions.h")
+        );
+        assert!(
+            crash
+                .modules_in_stack
+                .as_deref()
+                .unwrap()
+                .contains("firefox.exe")
+        );
+        assert_eq!(
+            crash.proto_signature,
+            Some("MOZ_Crash | Abort | NS_PrintStackTrace".to_string())
+        );
+        assert!(crash.async_shutdown_timeout.is_some());
+    }
+
+    #[test]
+    fn test_to_summary_annotations() {
+        let crash: ProcessedCrash = serde_json::from_str(annotated_crash_json()).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        assert_eq!(summary.report_type, Some("hang".to_string()));
+        assert_eq!(summary.process_type, Some("parent".to_string()));
+        assert_eq!(summary.uptime, Some(2175));
+        assert_eq!(summary.startup_crash, Some(false));
+        assert_eq!(summary.thread_count, Some(64));
+        assert_eq!(
+            summary.shutdown_progress,
+            Some("profile-before-change".to_string())
+        );
+        assert_eq!(summary.shutdown_reason, Some("AppClose".to_string()));
+        assert_eq!(summary.last_error_value, Some("ERROR_SUCCESS".to_string()));
+        assert_eq!(
+            summary.crash_inconsistencies,
+            vec!["crashing thread mismatch"]
+        );
+        assert!(summary.proto_signature.is_some());
+        assert!(summary.topmost_filenames.is_some());
+        assert!(summary.modules_in_stack.is_some());
+        assert!(summary.app_notes.is_some());
+        assert!(summary.xpcom_spin_event_loop_stack.is_some());
+    }
+
+    #[test]
+    fn test_to_summary_parses_async_shutdown_timeout() {
+        let crash: ProcessedCrash = serde_json::from_str(annotated_crash_json()).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        match summary.async_shutdown_timeout.as_ref().unwrap() {
+            AsyncShutdownTimeout::Parsed(data) => {
+                assert_eq!(data.phase, "profile-before-change");
+                assert_eq!(data.conditions.len(), 3);
+                assert!(
+                    data.conditions[0]
+                        .filename
+                        .as_deref()
+                        .unwrap()
+                        .ends_with("ServiceWorkerRegistrar.cpp"),
+                    "unexpected filename: {:?}",
+                    data.conditions[0].filename
+                );
+                assert_eq!(data.conditions[0].line_number, Some(1566));
+                // The third condition's `state` is the string "(none)", not an
+                // object; it must not break parsing of the blob.
+                assert_eq!(
+                    data.conditions[2].state_display(),
+                    Some("(none)".to_string())
+                );
+            }
+            AsyncShutdownTimeout::Raw(raw) => panic!("expected a parsed blob, got raw: {}", raw),
+        }
+    }
+
+    #[test]
+    fn test_to_summary_async_shutdown_timeout_malformed_kept_verbatim() {
+        let json = r#"{"uuid": "abc", "async_shutdown_timeout": "phase: profile-before-change"}"#;
+        let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+        let summary = crash.to_summary(10, false);
+
+        match summary.async_shutdown_timeout.as_ref().unwrap() {
+            AsyncShutdownTimeout::Raw(raw) => assert_eq!(raw, "phase: profile-before-change"),
+            AsyncShutdownTimeout::Parsed(data) => panic!("unexpectedly parsed: {:?}", data),
+        }
+    }
+
+    #[test]
+    fn test_annotations_absent_when_api_omits_them() {
+        // The sample crash has none of the annotation keys: every value must be
+        // absent rather than defaulted to a misleading zero/false.
+        let crash: ProcessedCrash = serde_json::from_str(sample_crash_json()).unwrap();
+        assert_eq!(crash.report_type, None);
+        assert_eq!(crash.process_type, None);
+        assert_eq!(crash.uptime, None);
+        assert_eq!(crash.startup_crash, None);
+        assert_eq!(crash.thread_count, None);
+        assert_eq!(crash.async_shutdown_timeout, None);
+        assert_eq!(crash.crash_inconsistencies, None);
+
+        let summary = crash.to_summary(10, false);
+        assert_eq!(summary.report_type, None);
+        assert_eq!(summary.process_type, None);
+        assert_eq!(summary.uptime, None);
+        assert_eq!(summary.startup_crash, None);
+        assert_eq!(summary.thread_count, None);
+        assert!(summary.async_shutdown_timeout.is_none());
+        assert!(summary.shutdown_progress.is_none());
+        assert!(summary.shutdown_reason.is_none());
+        assert!(summary.xpcom_spin_event_loop_stack.is_none());
+        assert!(summary.app_notes.is_none());
+        assert!(summary.last_error_value.is_none());
+        assert!(summary.topmost_filenames.is_none());
+        assert!(summary.modules_in_stack.is_none());
+        assert!(summary.proto_signature.is_none());
+        assert!(summary.crash_inconsistencies.is_empty());
+    }
+
+    #[test]
+    fn test_annotations_tolerate_string_scalars() {
+        // Defensive: a numeric or boolean annotation arriving as a string must
+        // not fail the whole crash deserialization.
+        let json =
+            r#"{"uuid": "abc", "uptime": "2175", "thread_count": "64", "startup_crash": "1"}"#;
+        let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+        assert_eq!(crash.uptime, Some(2175));
+        assert_eq!(crash.thread_count, Some(64));
+        assert_eq!(crash.startup_crash, Some(true));
+
+        // An unparseable value degrades to absent, not to an error.
+        let json = r#"{"uuid": "abc", "uptime": "unknown", "startup_crash": []}"#;
+        let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+        assert_eq!(crash.uptime, None);
+        assert_eq!(crash.startup_crash, None);
+    }
 
     fn sample_crash_json() -> &'static str {
         r#"{

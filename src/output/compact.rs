@@ -221,6 +221,7 @@ mod tests {
             }],
             all_threads: vec![],
             modules: vec![],
+            ..Default::default()
         }
     }
 
@@ -285,6 +286,7 @@ mod tests {
                     cert_subject: Some("Mozilla Corporation".to_string()),
                 },
             ],
+            ..Default::default()
         }
     }
 
