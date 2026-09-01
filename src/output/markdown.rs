@@ -5,7 +5,10 @@
 use crate::commands::crash_pings::format_frame_location;
 use crate::models::bugs::BugsSummary;
 use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
-use crate::models::{CorrelationsSummary, CrashSummary, ModulesMode, SearchResponse, StackFrame};
+use crate::models::{
+    AsyncShutdownTimeout, CorrelationsSummary, CrashSummary, ModulesMode, SearchResponse,
+    StackFrame,
+};
 use std::collections::HashSet;
 
 fn format_function(frame: &StackFrame) -> String {
@@ -54,6 +57,10 @@ pub fn format_bugs(summary: &BugsSummary) -> String {
     output
 }
 
+/// The default crash report: identity, the `## Details` metadata list (which
+/// includes the always-on crash-type annotations), the stack trace(s) and the
+/// module table. The bulkier annotations live in [`format_annotations`], which
+/// the crash command appends after this on request.
 pub fn format_crash(summary: &CrashSummary, modules_mode: ModulesMode) -> String {
     let mut output = String::new();
 
@@ -62,6 +69,26 @@ pub fn format_crash(summary: &CrashSummary, modules_mode: ModulesMode) -> String
     output.push_str(&format!("**Signature:** `{}`\n\n", summary.signature));
 
     output.push_str("## Details\n\n");
+
+    // What kind of crash this is, from the always-on annotations. Each line is
+    // independent, so a crash with none of them reads exactly as before.
+    if let Some(report_type) = &summary.report_type {
+        output.push_str(&format!("- **Report Type:** {}\n", report_type));
+    }
+    if let Some(process_type) = &summary.process_type {
+        output.push_str(&format!("- **Process Type:** {}\n", process_type));
+    }
+    if let Some(uptime) = summary.uptime {
+        output.push_str(&format!("- **Uptime:** {} seconds\n", uptime));
+    }
+    if let Some(thread_count) = summary.thread_count {
+        output.push_str(&format!("- **Thread Count:** {}\n", thread_count));
+    }
+    // `false` is the answer for the overwhelming majority of crashes, so it is
+    // noise: only a startup crash is worth a line.
+    if summary.startup_crash == Some(true) {
+        output.push_str("- **Startup Crash:** yes\n");
+    }
 
     if let Some(reason) = &summary.reason {
         let addr_str = summary.address.as_deref().unwrap_or("");
@@ -231,6 +258,162 @@ fn format_modules(summary: &CrashSummary, mode: ModulesMode) -> String {
         }
     }
     out
+}
+
+/// The `--annotations` section: the crash annotations that are too bulky for
+/// the default report but decide most shutdown-hang investigations. Appended
+/// after [`format_crash`]'s output, so it opens at `##` level.
+///
+/// Short values become list items; long or multi-line ones get their own fenced
+/// subsection, which also keeps a stray `|` or a leading `###!!!` out of the
+/// markdown parser. Absent fields are omitted entirely, and a crash with no
+/// annotations at all says so rather than showing an empty section.
+pub fn format_annotations(summary: &CrashSummary) -> String {
+    /// Longest value still rendered as a list item.
+    const INLINE_MAX: usize = 200;
+
+    fn add(
+        label: &'static str,
+        value: &Option<String>,
+        items: &mut Vec<String>,
+        blocks: &mut Vec<(&'static str, String)>,
+    ) {
+        let Some(raw) = value.as_deref() else {
+            return;
+        };
+        // Annotations arrive with incidental whitespace: `app_notes` starts
+        // with a literal newline, which would otherwise break the list.
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        if trimmed.contains('\n') || trimmed.chars().count() > INLINE_MAX {
+            blocks.push((label, trimmed.to_string()));
+        } else {
+            items.push(format!("- **{}:** `{}`\n", label, trimmed));
+        }
+    }
+
+    let mut items: Vec<String> = Vec::new();
+    let mut blocks: Vec<(&'static str, String)> = Vec::new();
+
+    add(
+        "Shutdown Progress",
+        &summary.shutdown_progress,
+        &mut items,
+        &mut blocks,
+    );
+    add(
+        "Shutdown Reason",
+        &summary.shutdown_reason,
+        &mut items,
+        &mut blocks,
+    );
+    add(
+        "XPCOM Spin Event Loop Stack",
+        &summary.xpcom_spin_event_loop_stack,
+        &mut items,
+        &mut blocks,
+    );
+    add("App Notes", &summary.app_notes, &mut items, &mut blocks);
+    add(
+        "Last Error Value",
+        &summary.last_error_value,
+        &mut items,
+        &mut blocks,
+    );
+    if !summary.crash_inconsistencies.is_empty() {
+        let list = summary
+            .crash_inconsistencies
+            .iter()
+            .map(|c| format!("`{}`", c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        items.push(format!("- **Crash Inconsistencies:** {}\n", list));
+    }
+    add(
+        "Topmost Filenames",
+        &summary.topmost_filenames,
+        &mut items,
+        &mut blocks,
+    );
+    add(
+        "Modules in Stack",
+        &summary.modules_in_stack,
+        &mut items,
+        &mut blocks,
+    );
+    add(
+        "Proto Signature",
+        &summary.proto_signature,
+        &mut items,
+        &mut blocks,
+    );
+
+    let mut output = String::new();
+    output.push_str("\n## Annotations\n\n");
+
+    if items.is_empty() && blocks.is_empty() && summary.async_shutdown_timeout.is_none() {
+        output.push_str("No annotations found.\n");
+        return output;
+    }
+
+    for item in &items {
+        output.push_str(item);
+    }
+    if !items.is_empty() {
+        output.push('\n');
+    }
+
+    if let Some(timeout) = &summary.async_shutdown_timeout {
+        output.push_str("### Async Shutdown Timeout\n\n");
+        match timeout {
+            AsyncShutdownTimeout::Parsed(data) => {
+                let count = data.conditions.len();
+                output.push_str(&format!("**Phase:** `{}`", data.phase));
+                if count == 0 {
+                    output.push_str(" (no pending conditions)\n\n");
+                } else {
+                    output.push_str(&format!(
+                        " ({} pending condition{})\n\n",
+                        count,
+                        if count == 1 { "" } else { "s" }
+                    ));
+                    for (i, condition) in data.conditions.iter().enumerate() {
+                        output.push_str(&format!("{}. **{}**\n", i + 1, condition.name));
+                        match (&condition.filename, condition.line_number) {
+                            (Some(file), Some(line)) => {
+                                output.push_str(&format!("   - File: `{}:{}`\n", file, line))
+                            }
+                            (Some(file), None) => {
+                                output.push_str(&format!("   - File: `{}`\n", file))
+                            }
+                            _ => {}
+                        }
+                        if let Some(state) = condition.state_display() {
+                            output.push_str(&format!("   - State: `{}`\n", state));
+                        }
+                    }
+                    output.push('\n');
+                }
+            }
+            // Not JSON, or not the expected shape: keep it verbatim, fenced so
+            // that whatever it contains cannot be misread as markdown.
+            AsyncShutdownTimeout::Raw(raw) => {
+                output.push_str(&format!("```\n{}\n```\n\n", raw.trim()));
+            }
+        }
+    }
+
+    for (label, value) in &blocks {
+        output.push_str(&format!("### {}\n\n```\n{}\n```\n\n", label, value));
+    }
+
+    while output.ends_with("\n\n") {
+        output.pop();
+    }
+
+    output
 }
 
 pub fn format_search(response: &SearchResponse) -> String {
@@ -647,6 +830,310 @@ mod tests {
         let summary = sample_crash_summary_with_modules();
         let output = format_crash(&summary, ModulesMode::ThirdParty);
         assert!(!output.contains("## Modules"));
+    }
+
+    /// The always-on annotation values of crash
+    /// b98bbb81-3ff6-4825-991f-6a0b30260901: a parent-process shutdown hang
+    /// that is not a startup crash.
+    fn sample_crash_summary_with_annotations() -> CrashSummary {
+        CrashSummary {
+            report_type: Some("hang".to_string()),
+            process_type: Some("parent".to_string()),
+            uptime: Some(2175),
+            startup_crash: Some(false),
+            thread_count: Some(64),
+            ..sample_crash_summary()
+        }
+    }
+
+    #[test]
+    fn test_format_crash_markdown_always_on_annotations() {
+        let summary = sample_crash_summary_with_annotations();
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert!(output.contains("- **Report Type:** hang"), "{}", output);
+        assert!(output.contains("- **Process Type:** parent"), "{}", output);
+        assert!(output.contains("- **Uptime:** 2175 seconds"), "{}", output);
+        assert!(output.contains("- **Thread Count:** 64"), "{}", output);
+        // startup_crash is false here, so it must not add a line.
+        assert!(!output.contains("Startup Crash"), "{}", output);
+    }
+
+    #[test]
+    fn test_format_crash_markdown_no_always_on_annotations() {
+        // sample_crash_summary() leaves all five at their default None.
+        let output = format_crash(&sample_crash_summary(), ModulesMode::None);
+
+        for label in [
+            "Report Type",
+            "Process Type",
+            "Uptime",
+            "Thread Count",
+            "Startup Crash",
+        ] {
+            assert!(!output.contains(label), "unexpected {}: {}", label, output);
+        }
+    }
+
+    #[test]
+    fn test_format_crash_markdown_startup_crash_only_when_true() {
+        let mut summary = sample_crash_summary_with_annotations();
+
+        summary.startup_crash = Some(true);
+        assert!(
+            format_crash(&summary, ModulesMode::None).contains("- **Startup Crash:** yes"),
+            "Some(true) must be shown"
+        );
+
+        summary.startup_crash = Some(false);
+        assert!(
+            !format_crash(&summary, ModulesMode::None).contains("Startup Crash"),
+            "Some(false) must be omitted"
+        );
+
+        summary.startup_crash = None;
+        assert!(
+            !format_crash(&summary, ModulesMode::None).contains("Startup Crash"),
+            "None must be omitted"
+        );
+    }
+
+    /// The opt-in annotation values of crash
+    /// b98bbb81-3ff6-4825-991f-6a0b30260901, including its leading-newline
+    /// `app_notes` and its ` | `-separated `proto_signature`.
+    fn sample_annotations_summary() -> CrashSummary {
+        CrashSummary {
+            async_shutdown_timeout: Some(AsyncShutdownTimeout::parse(
+                r#"{"phase":"profile-before-change","conditions":[
+                    {"name":"ServiceWorkerRegistrar: Flushing data",
+                     "state":{"saveDataRunnableDispatched":false,"shuttingDown":false},
+                     "filename":"..\\..\\checkouts\\gecko\\dom\\serviceworkers\\ServiceWorkerRegistrar.cpp",
+                     "lineNumber":1566},
+                    {"name":"ASRouterStorage: flush pending writes",
+                     "state":{"pending":1},
+                     "filename":"resource:///modules/asrouter/ASRouterDefaultConfig.sys.mjs",
+                     "lineNumber":50},
+                    {"name":"ShieldRecipeClient: Cleaning up",
+                     "state":"(none)",
+                     "filename":"resource://normandy/lib/CleanupManager.sys.mjs",
+                     "lineNumber":39}]}"#,
+            )),
+            shutdown_progress: Some("profile-before-change".to_string()),
+            shutdown_reason: Some("AppClose".to_string()),
+            xpcom_spin_event_loop_stack: Some(
+                "default: AsyncShutdown Spinner for profile-before-change".to_string(),
+            ),
+            app_notes: Some(
+                "\n-L1000-W0000100-T1) DWrite? DWrite+ WR! WR+ xpcom_runtime_abort(###!!! ABORT: file checkouts\\gecko\\dom\\serviceworkers\\ServiceWorkerRegistrar.cpp:1566)"
+                    .to_string(),
+            ),
+            last_error_value: Some("ERROR_SUCCESS".to_string()),
+            crash_inconsistencies: vec!["crashing thread frames mismatch".to_string()],
+            topmost_filenames: Some("mfbt/Assertions.h".to_string()),
+            modules_in_stack: Some(
+                "firefox.exe/77DFC624CE9E472E4C4C44205044422E1;xul.dll/87B0A0D5FAAC4E194C4C44205044422E1"
+                    .to_string(),
+            ),
+            proto_signature: Some(
+                "MOZ_Crash | Abort | NS_PrintStackTrace | NS_DebugBreak | nsDebugImpl::Abort"
+                    .to_string(),
+            ),
+            ..sample_crash_summary()
+        }
+    }
+
+    #[test]
+    fn test_format_annotations_markdown_all_fields() {
+        let output = format_annotations(&sample_annotations_summary());
+
+        assert!(output.starts_with("\n## Annotations\n\n"), "{}", output);
+        assert!(output.contains("### Async Shutdown Timeout"), "{}", output);
+        assert!(
+            output.contains("- **Shutdown Progress:** `profile-before-change`"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("- **Shutdown Reason:** `AppClose`"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains(
+                "- **XPCOM Spin Event Loop Stack:** `default: AsyncShutdown Spinner for profile-before-change`"
+            ),
+            "{}",
+            output
+        );
+        assert!(output.contains("- **App Notes:** `-L1000"), "{}", output);
+        assert!(
+            output.contains("- **Last Error Value:** `ERROR_SUCCESS`"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("- **Crash Inconsistencies:** `crashing thread frames mismatch`"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("- **Topmost Filenames:** `mfbt/Assertions.h`"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("- **Modules in Stack:** `firefox.exe/"),
+            "{}",
+            output
+        );
+        assert!(output.contains("MOZ_Crash | Abort"), "{}", output);
+    }
+
+    #[test]
+    fn test_format_annotations_markdown_absent_fields_omitted() {
+        let summary = CrashSummary {
+            shutdown_reason: Some("AppClose".to_string()),
+            ..sample_crash_summary()
+        };
+        let output = format_annotations(&summary);
+
+        assert!(
+            output.contains("- **Shutdown Reason:** `AppClose`"),
+            "{}",
+            output
+        );
+        assert!(!output.contains("Shutdown Progress"), "{}", output);
+        assert!(!output.contains("App Notes"), "{}", output);
+        assert!(!output.contains("Async Shutdown Timeout"), "{}", output);
+        assert!(!output.contains("No annotations found."), "{}", output);
+    }
+
+    #[test]
+    fn test_format_annotations_markdown_empty() {
+        // Nothing present, including an empty crash_inconsistencies Vec: the
+        // reader must be able to tell the flag worked.
+        let output = format_annotations(&sample_crash_summary());
+
+        assert!(output.contains("## Annotations"), "{}", output);
+        assert!(output.contains("No annotations found."), "{}", output);
+    }
+
+    #[test]
+    fn test_format_annotations_markdown_shutdown_conditions() {
+        let output = format_annotations(&sample_annotations_summary());
+
+        assert!(
+            output.contains("**Phase:** `profile-before-change` (3 pending conditions)"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("1. **ServiceWorkerRegistrar: Flushing data**"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("ServiceWorkerRegistrar.cpp:1566`"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains(
+                "   - State: `{\"saveDataRunnableDispatched\":false,\"shuttingDown\":false}`"
+            ),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("3. **ShieldRecipeClient: Cleaning up**"),
+            "{}",
+            output
+        );
+        // A bare-string state renders as-is.
+        assert!(output.contains("   - State: `(none)`"), "{}", output);
+    }
+
+    #[test]
+    fn test_format_annotations_markdown_condition_without_file() {
+        let summary = CrashSummary {
+            async_shutdown_timeout: Some(AsyncShutdownTimeout::parse(
+                r#"{"phase":"quit-application","conditions":[{"name":"Blocker"}]}"#,
+            )),
+            ..sample_crash_summary()
+        };
+        let output = format_annotations(&summary);
+
+        assert!(
+            output.contains("**Phase:** `quit-application` (1 pending condition)"),
+            "{}",
+            output
+        );
+        assert!(output.contains("1. **Blocker**"), "{}", output);
+        assert!(!output.contains("- File:"), "{}", output);
+        assert!(!output.contains("- State:"), "{}", output);
+    }
+
+    #[test]
+    fn test_format_annotations_markdown_raw_timeout() {
+        let summary = CrashSummary {
+            async_shutdown_timeout: Some(AsyncShutdownTimeout::Raw(
+                "  not json at all {  ".to_string(),
+            )),
+            ..sample_crash_summary()
+        };
+        let output = format_annotations(&summary);
+
+        assert!(output.contains("### Async Shutdown Timeout"), "{}", output);
+        // Verbatim, trimmed, and fenced so it cannot be misread as markdown.
+        assert!(output.contains("```\nnot json at all {\n```"), "{}", output);
+        assert!(!output.contains("No annotations found."), "{}", output);
+    }
+
+    #[test]
+    fn test_format_annotations_markdown_app_notes_leading_newline_trimmed() {
+        let summary = CrashSummary {
+            app_notes: Some(
+                "\n-L1000-W0000100-T1) DWrite? xpcom_runtime_abort(###!!! ABORT)".to_string(),
+            ),
+            ..sample_crash_summary()
+        };
+        let output = format_annotations(&summary);
+
+        // No stray blank line, and no line may begin with the ###!!! text,
+        // which markdown would otherwise render as a heading.
+        assert!(
+            output.contains("- **App Notes:** `-L1000-W0000100-T1)"),
+            "{}",
+            output
+        );
+        assert!(!output.contains("`\n-L1000"), "{}", output);
+        assert!(
+            !output.lines().any(|l| l.starts_with("###!!!")),
+            "{}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_format_annotations_markdown_long_proto_signature_is_fenced() {
+        // ~1,000 chars in the live data, and full of ` | ` separators that
+        // would break a markdown table.
+        let long_signature = vec!["MOZ_Crash"; 40].join(" | ");
+        let summary = CrashSummary {
+            proto_signature: Some(long_signature.clone()),
+            ..sample_crash_summary()
+        };
+        let output = format_annotations(&summary);
+
+        assert!(output.contains("### Proto Signature"), "{}", output);
+        assert!(
+            output.contains(&format!("```\n{}\n```", long_signature)),
+            "{}",
+            output
+        );
+        // Not a list item, and not a table row.
+        assert!(!output.contains("- **Proto Signature:**"), "{}", output);
+        assert!(!output.lines().any(|l| l.starts_with('|')), "{}", output);
     }
 
     #[test]
