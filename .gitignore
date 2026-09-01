@@ -4,4 +4,5 @@
 
 # Claude Code local files (personal, not shared)
 .claude/settings.local.json
+.claude/runs/
 CLAUDE.local.md

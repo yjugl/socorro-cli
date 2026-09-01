@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Personal, machine-local notes (not checked in) live in `CLAUDE.local.md`:
+
+@CLAUDE.local.md
+
 ## Overview
 
 socorro-cli is a Rust CLI tool for querying Mozilla's Socorro crash reporting system. It's optimized for LLM coding agents with token-efficient output formats. The tool provides six main commands: `crash` (fetch individual crash details), `search` (search and aggregate crashes), `bugs` (look up Bugzilla bugs for crash signatures or vice versa), `correlations` (show over-represented attributes for a signature), `crash-pings` (query opt-out crash ping telemetry from crash-pings.mozilla.org), and `auth` (manage API token storage).
