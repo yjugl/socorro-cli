@@ -14,10 +14,17 @@ use crate::models::crash_pings::{
     CrashPingsItem, CrashPingsResponse, CrashPingsSummary,
 };
 use crate::output::{OutputFormat, compact, json, markdown};
-use crate::{Error, Result};
+use crate::{Error, PREVIEW_BYTES, Result, status_error, truncate_on_char_boundary};
 
 const BASE_URL: &str = "https://crash-pings.mozilla.org";
 
+/// Fetches one day of crash pings, from the local cache if it is there.
+///
+/// Status mapping: `200` parses and is cached; `202` (the day's data is not
+/// built yet) becomes an explanatory [`Error::ParseError`]; `404` becomes
+/// [`Error::NotFound`]; anything else goes through [`status_error`], so a 4xx
+/// or 5xx is an [`Error::Http`] and any other status is an
+/// [`Error::UnexpectedStatus`].
 fn fetch_ping_data(
     client: &reqwest::blocking::Client,
     base_url: &str,
@@ -44,11 +51,12 @@ fn fetch_ping_data(
                 Error::ParseError(format!(
                     "{}: {}",
                     e,
-                    // Slicing a byte slice cannot panic on a character
+                    // The shared `PREVIEW_BYTES` cap, but applied to the raw
+                    // bytes: slicing a byte slice cannot panic on a character
                     // boundary, so this preview needs no
                     // `truncate_on_char_boundary`; `from_utf8_lossy` repairs
                     // whatever sequence the cap happens to split.
-                    String::from_utf8_lossy(&bytes[..bytes.len().min(200)])
+                    String::from_utf8_lossy(&bytes[..bytes.len().min(PREVIEW_BYTES)])
                 ))
             })
         }
@@ -62,10 +70,16 @@ fn fetch_ping_data(
             "No crash ping data for date {}. Data is available from September 2024 onwards.",
             date
         ))),
-        _ => Err(Error::Http(response.error_for_status().unwrap_err())),
+        _ => Err(status_error(response)),
     }
 }
 
+/// Fetches the stack for a single crash ping. Not cached.
+///
+/// Status mapping: `200` parses; `404` becomes [`Error::NotFound`]; anything
+/// else goes through [`status_error`], which keeps [`Error::Http`] for a
+/// genuine 4xx/5xx and reports any other status -- notably the `202` this
+/// endpoint's sibling serves -- as [`Error::UnexpectedStatus`].
 fn fetch_stack(
     client: &reqwest::blocking::Client,
     base_url: &str,
@@ -82,7 +96,7 @@ fn fetch_stack(
                 Error::ParseError(format!(
                     "{}: {}",
                     e,
-                    crate::truncate_on_char_boundary(&text, 200)
+                    truncate_on_char_boundary(&text, PREVIEW_BYTES)
                 ))
             })
         }
@@ -90,7 +104,7 @@ fn fetch_stack(
             "Stack not found for crash ping {} on {}",
             crash_id, date
         ))),
-        _ => Err(Error::Http(response.error_for_status().unwrap_err())),
+        _ => Err(status_error(response)),
     }
 }
 
@@ -283,8 +297,15 @@ pub fn format_frame_location(frame: &CrashPingFrame) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The one copy of the cache-redirect guard, shared with `cache`'s own
+    // tests. Every `fetch_ping_data` test needs it: cache keys carry no
+    // base-URL component and the cache is consulted before the request URL is
+    // built, so a test pointed at the local server would otherwise hit the
+    // user's real production cache.
+    use crate::cache::RedirectedCache;
     use crate::test_server::TestServer;
     use serde_json::json;
+    use serial_test::serial;
 
     fn make_test_response() -> CrashPingsResponse {
         let data = json!({
@@ -593,5 +614,234 @@ mod tests {
             !message.contains('\u{2014}'),
             "preview should stop before the split character: {message}"
         );
+    }
+
+    /// A one-ping `/ping_data/<date>` body: the smallest thing that
+    /// deserializes into a `CrashPingsResponse`, so a test can prove the happy
+    /// path still parses without carrying a multi-megabyte fixture.
+    fn minimal_ping_data_body() -> String {
+        json!({
+            "channel": { "strings": ["release"], "values": [0] },
+            "process": { "strings": ["main"], "values": [0] },
+            "ipc_actor": { "strings": [null], "values": [0] },
+            "clientid": { "strings": ["c1"], "values": [0] },
+            "crashid": ["ping-id-1"],
+            "version": { "strings": ["147.0"], "values": [0] },
+            "os": { "strings": ["Windows"], "values": [0] },
+            "osversion": { "strings": ["10.0"], "values": [0] },
+            "arch": { "strings": ["amd64"], "values": [0] },
+            "date": { "strings": ["2026-09-01"], "values": [0] },
+            "reason": { "strings": [null], "values": [0] },
+            "type": { "strings": [null], "values": [0] },
+            "minidump_sha256_hash": [null],
+            "startup_crash": [null],
+            "build_id": { "strings": ["20260901000000"], "values": [0] },
+            "signature": { "strings": ["OOM | small"], "values": [0] },
+        })
+        .to_string()
+    }
+
+    // --- Status mapping: the `_` fallthrough arms ---
+
+    /// `crash-pings.mozilla.org` serves 202 while a day's data is still being
+    /// built, and `reqwest`'s `error_for_status` treats 202 as success -- so
+    /// the old fallthrough arm, which took the error out of that method's
+    /// `Result` unconditionally, unwrapped an `Ok` and panicked.
+    /// `fetch_stack` does not special-case 202, so it is the reachable one.
+    #[test]
+    fn fetch_stack_maps_202_to_unexpected_status_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(202, "accepted, not ready yet");
+
+        let err = fetch_stack(&test_client(), &server.base_url(), "2026-09-01", "abc")
+            .expect_err("202 is not a usable stack response");
+
+        let Error::UnexpectedStatus { status, url } = &err else {
+            panic!("expected Error::UnexpectedStatus, got {err:?}");
+        };
+        assert_eq!(*status, 202);
+        assert_eq!(url, &format!("{}/stack/2026-09-01/abc", server.base_url()));
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Unexpected HTTP status 202 from {}/stack/2026-09-01/abc",
+                server.base_url()
+            )
+        );
+    }
+
+    /// The ping-data fetch handles 202 itself, so its fallthrough is reached by
+    /// some *other* non-error status. 204 stands in for that class.
+    #[test]
+    #[serial]
+    fn fetch_ping_data_maps_204_to_unexpected_status_without_panicking() {
+        let _cache = RedirectedCache::new();
+        let server = TestServer::start();
+        server.push_response(204, "");
+
+        let err = fetch_ping_data(&test_client(), &server.base_url(), "2026-09-01")
+            .expect_err("204 carries no ping data");
+
+        let Error::UnexpectedStatus { status, url } = &err else {
+            panic!("expected Error::UnexpectedStatus, got {err:?}");
+        };
+        assert_eq!(*status, 204);
+        assert_eq!(url, &format!("{}/ping_data/2026-09-01", server.base_url()));
+    }
+
+    /// A genuine server error keeps `Error::Http`, which carries `reqwest`'s
+    /// richer error, rather than being flattened into `UnexpectedStatus`.
+    #[test]
+    fn fetch_stack_maps_500_to_an_http_error() {
+        let server = TestServer::start();
+        server.push_response(500, "boom");
+
+        let err = fetch_stack(&test_client(), &server.base_url(), "2026-09-01", "abc")
+            .expect_err("500 is an error");
+
+        let Error::Http(source) = &err else {
+            panic!("expected Error::Http, got {err:?}");
+        };
+        assert_eq!(source.status().map(|s| s.as_u16()), Some(500));
+    }
+
+    #[test]
+    #[serial]
+    fn fetch_ping_data_maps_500_to_an_http_error() {
+        let _cache = RedirectedCache::new();
+        let server = TestServer::start();
+        server.push_response(500, "boom");
+
+        let err = fetch_ping_data(&test_client(), &server.base_url(), "2026-09-01")
+            .expect_err("500 is an error");
+
+        let Error::Http(source) = &err else {
+            panic!("expected Error::Http, got {err:?}");
+        };
+        assert_eq!(source.status().map(|s| s.as_u16()), Some(500));
+    }
+
+    // --- Status mapping: the explicit arms, which must not regress ---
+
+    /// The live server does this every day until roughly 04:00 UTC, and the
+    /// explanatory message is the whole point of handling 202 here. It must not
+    /// be rerouted to the generic `UnexpectedStatus`.
+    #[test]
+    #[serial]
+    fn fetch_ping_data_maps_202_to_an_explanatory_parse_error() {
+        let _cache = RedirectedCache::new();
+        let server = TestServer::start();
+        server.push_response(202, "");
+
+        let err = fetch_ping_data(&test_client(), &server.base_url(), "2026-09-02")
+            .expect_err("202 means the data is not built yet");
+
+        let Error::ParseError(message) = &err else {
+            panic!("expected Error::ParseError, got {err:?}");
+        };
+        assert!(message.contains("2026-09-02"), "{message}");
+        assert!(message.contains("not available (HTTP 202)"), "{message}");
+        assert!(message.contains("around 04:00 UTC"), "{message}");
+    }
+
+    #[test]
+    #[serial]
+    fn fetch_ping_data_maps_404_to_not_found() {
+        let _cache = RedirectedCache::new();
+        let server = TestServer::start();
+        server.push_response(404, "");
+
+        let err = fetch_ping_data(&test_client(), &server.base_url(), "2019-01-01")
+            .expect_err("404 means no data for that date");
+
+        let Error::NotFound(message) = &err else {
+            panic!("expected Error::NotFound, got {err:?}");
+        };
+        assert!(message.contains("2019-01-01"), "{message}");
+        assert!(
+            message.contains("Data is available from September 2024 onwards"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn fetch_stack_maps_404_to_not_found() {
+        let server = TestServer::start();
+        server.push_response(404, "");
+
+        let err = fetch_stack(
+            &test_client(),
+            &server.base_url(),
+            "2026-09-01",
+            "ping-id-1",
+        )
+        .expect_err("404 means no stack for that ping");
+
+        let Error::NotFound(message) = &err else {
+            panic!("expected Error::NotFound, got {err:?}");
+        };
+        assert!(
+            message.contains("Stack not found for crash ping"),
+            "{message}"
+        );
+        assert!(message.contains("ping-id-1"), "{message}");
+        assert!(message.contains("2026-09-01"), "{message}");
+    }
+
+    // --- Happy paths, the cache, and the request URLs ---
+
+    /// Proves three things at once: a 200 body still deserializes, the response
+    /// is written to the cache, and the second call is served from that cache
+    /// rather than the network -- only one response is queued, so a second
+    /// request would get the harness's loud 500 and fail this test.
+    #[test]
+    #[serial]
+    fn fetch_ping_data_parses_and_caches_a_successful_response() {
+        let cache = RedirectedCache::new();
+        let server = TestServer::start();
+        server.push_response(200, minimal_ping_data_body());
+
+        let first = fetch_ping_data(&test_client(), &server.base_url(), "2026-09-01")
+            .expect("a well-formed body must parse");
+        assert_eq!(first.len(), 1);
+        assert_eq!(first.signature(0), "OOM | small");
+
+        let cached = cache.path().join("crash-pings-2026-09-01.json");
+        assert!(cached.is_file(), "response was not written to the cache");
+
+        let second = fetch_ping_data(&test_client(), &server.base_url(), "2026-09-01")
+            .expect("the second call must be served from the cache");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second.signature(0), "OOM | small");
+
+        let requests = server.requests();
+        assert_eq!(
+            requests.len(),
+            1,
+            "the second call went to the network instead of the cache"
+        );
+        assert_eq!(requests[0].path, "/ping_data/2026-09-01");
+    }
+
+    /// Pins the stack endpoint's shape, so a refactor cannot silently start
+    /// querying the wrong URL while every status-mapping test above still
+    /// passes.
+    #[test]
+    fn fetch_stack_requests_the_documented_path() {
+        let server = TestServer::start();
+        server.push_response(200, r#"{"stack": [], "java_exception": null}"#);
+
+        let resp = fetch_stack(
+            &test_client(),
+            &server.base_url(),
+            "2026-09-01",
+            "ping-id-1",
+        )
+        .expect("an empty stack still parses");
+        assert_eq!(resp.stack.map(|frames| frames.len()), Some(0));
+
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/stack/2026-09-01/ping-id-1");
     }
 }

@@ -4,7 +4,7 @@
 
 use crate::models::bugs::BugsResponse;
 use crate::models::{ProcessedCrash, SearchParams, SearchResponse};
-use crate::{Error, Result, auth, truncate_on_char_boundary};
+use crate::{Error, PREVIEW_BYTES, Result, auth, status_error, truncate_on_char_boundary};
 use reqwest::StatusCode;
 use reqwest::blocking::Client;
 
@@ -76,15 +76,6 @@ fn exact_match_default(value: String) -> String {
     }
 }
 
-/// How many bytes of an unparseable response body to quote in
-/// [`Error::ParseError`].
-///
-/// Applied through [`truncate_on_char_boundary`] rather than by slicing: the
-/// body is arbitrary bytes off the network, so a cap that lands inside a
-/// multi-byte character would panic on the very path that exists to report a
-/// problem. See that function for the failing shape.
-const PREVIEW_BYTES: usize = 200;
-
 pub struct SocorroClient {
     base_url: String,
     client: Client,
@@ -106,8 +97,17 @@ impl SocorroClient {
     ///
     /// Validates the crash ID, sends the request (attaching the `Auth-Token`
     /// header only when `use_auth` is true and a token is available), and maps
-    /// non-`OK` statuses onto the same errors both `get_crash` and
-    /// `get_crash_raw` report.
+    /// the response status onto the errors both `get_crash` and `get_crash_raw`
+    /// report:
+    ///
+    ///   - `200` -> the body, as text;
+    ///   - `404` -> [`Error::NotFound`] naming `crash_id`;
+    ///   - `429` -> [`Error::RateLimited`];
+    ///   - any other 4xx or 5xx -> [`Error::Http`], carrying reqwest's own
+    ///     status and URL context;
+    ///   - anything else, such as a `202` or an unfollowed redirect ->
+    ///     [`Error::UnexpectedStatus`]. See [`status_error`] for why those last
+    ///     two cannot share a representation.
     fn fetch_processed_crash_body(&self, crash_id: &str, use_auth: bool) -> Result<String> {
         if !crash_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
             return Err(Error::InvalidCrashId(crash_id.to_string()));
@@ -126,7 +126,7 @@ impl SocorroClient {
             StatusCode::OK => Ok(response.text()?),
             StatusCode::NOT_FOUND => Err(Error::NotFound(crash_id.to_string())),
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
-            _ => Err(Error::Http(response.error_for_status().unwrap_err())),
+            _ => Err(status_error(response)),
         }
     }
 
@@ -147,6 +147,9 @@ impl SocorroClient {
     /// keeps only the fields that struct declares, this preserves every key the
     /// server sent. The body is still parsed (not echoed verbatim), so a
     /// malformed response yields `Error::ParseError` exactly as `get_crash` does.
+    ///
+    /// Response statuses are mapped exactly as for `get_crash`; see
+    /// `fetch_processed_crash_body`, which both share, for the full table.
     ///
     /// `use_auth` is honoured identically to `get_crash`: the `Auth-Token`
     /// header is attached only when it is true and a token is available. Callers
@@ -189,7 +192,7 @@ impl SocorroClient {
                 })
             }
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
-            _ => Err(Error::Http(response.error_for_status().unwrap_err())),
+            _ => Err(status_error(response)),
         }
     }
 
@@ -219,7 +222,7 @@ impl SocorroClient {
                 })
             }
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
-            _ => Err(Error::Http(response.error_for_status().unwrap_err())),
+            _ => Err(status_error(response)),
         }
     }
 
@@ -316,7 +319,7 @@ impl SocorroClient {
                 })
             }
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
-            _ => Err(Error::Http(response.error_for_status().unwrap_err())),
+            _ => Err(status_error(response)),
         }
     }
 }
@@ -325,6 +328,7 @@ impl SocorroClient {
 mod tests {
     use super::*;
     use crate::test_server::TestServer;
+    use serial_test::serial;
 
     fn test_client() -> SocorroClient {
         SocorroClient::new("https://crash-stats.mozilla.org/api".to_string())
@@ -389,6 +393,372 @@ mod tests {
             facets_size: None,
             sort: "-date".to_string(),
         }
+    }
+
+    /// Run `body` with `SOCORRO_API_TOKEN_PATH` pointing at a throwaway token
+    /// file, so that `auth::get_token` is guaranteed to find *a* token even on
+    /// a machine with no keychain entry.
+    ///
+    /// That guarantee is what makes the "no `Auth-Token` header" assertions
+    /// load-bearing. Without it, a machine holding no credential at all would
+    /// satisfy them vacuously: the client would send no header because it had
+    /// none to send, not because it honoured `use_auth`, and the test would
+    /// keep passing even if `use_auth` were ignored outright.
+    ///
+    /// The file written here holds an obvious placeholder, never a real
+    /// credential, and the real file named by the variable is never read. The
+    /// test server records header *names* only (see
+    /// [`crate::test_server::RecordedRequest`]), so no token value -- not even
+    /// this placeholder -- can reach an assertion message or a backtrace.
+    fn with_a_token_available<T>(body: impl FnOnce() -> T) -> T {
+        let dir = tempfile::tempdir().expect("create a temp dir for the token file");
+        let token_path = dir.path().join("token");
+        std::fs::write(&token_path, "placeholder-not-a-real-token")
+            .expect("write the throwaway token file");
+
+        // SAFETY: tests using env vars are run serially via #[serial]
+        unsafe { std::env::set_var("SOCORRO_API_TOKEN_PATH", &token_path) };
+        // The keychain is consulted before the file, so the token the client
+        // finds may come from either source; all that matters is that one
+        // exists. Assert it, or the negative assertions prove nothing.
+        assert!(
+            auth::get_token().is_some(),
+            "no API token is reachable, so the no-token assertions would pass vacuously"
+        );
+        let result = body();
+        // SAFETY: tests using env vars are run serially via #[serial]
+        unsafe { std::env::remove_var("SOCORRO_API_TOKEN_PATH") };
+        result
+    }
+
+    /// Whether the one request `server` answered carried an `Auth-Token`
+    /// header. Asserts the request was recorded at all, so an absent header is
+    /// a real observation rather than an empty log.
+    fn sent_an_auth_token(server: &TestServer) -> bool {
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1, "expected exactly one request");
+        assert!(
+            requests[0].has_header("host"),
+            "the request head was not recorded, so nothing can be concluded from it"
+        );
+        requests[0].has_header("auth-token")
+    }
+
+    // `CLAUDE.md` makes it a security invariant that crash output destined for
+    // JSON is fetched *without* the API token: with no token the server strips
+    // the protected fields (registers, `mac_boot_args`, ...) out of `json_dump`
+    // itself, which is the only thing keeping them out of the raw `--full`
+    // passthrough. `should_use_auth` in `src/commands/crash.rs` decides this,
+    // and is tested there -- but nothing tested the plumbing that consumes its
+    // answer, so making `fetch_processed_crash_body` ignore `use_auth` and
+    // always attach the token left the whole suite green. The four tests below
+    // close that gap at the wire.
+
+    #[test]
+    #[serial]
+    fn get_crash_sends_no_auth_token_when_use_auth_is_false() {
+        with_a_token_available(|| {
+            let server = TestServer::start();
+            server.push_response(200, "{}");
+
+            let _ = client_for(&server).get_crash(CRASH_ID, false);
+
+            assert!(
+                !sent_an_auth_token(&server),
+                "get_crash sent the API token despite use_auth = false"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn get_crash_raw_sends_no_auth_token_when_use_auth_is_false() {
+        with_a_token_available(|| {
+            let server = TestServer::start();
+            server.push_response(200, "{}");
+
+            let _ = client_for(&server).get_crash_raw(CRASH_ID, false);
+
+            assert!(
+                !sent_an_auth_token(&server),
+                "get_crash_raw sent the API token despite use_auth = false"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn get_crash_sends_the_auth_token_when_use_auth_is_true() {
+        with_a_token_available(|| {
+            let server = TestServer::start();
+            server.push_response(200, "{}");
+
+            let _ = client_for(&server).get_crash(CRASH_ID, true);
+
+            assert!(
+                sent_an_auth_token(&server),
+                "get_crash did not send the API token despite use_auth = true"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn get_crash_raw_sends_the_auth_token_when_use_auth_is_true() {
+        with_a_token_available(|| {
+            let server = TestServer::start();
+            server.push_response(200, "{}");
+
+            let _ = client_for(&server).get_crash_raw(CRASH_ID, true);
+
+            assert!(
+                sent_an_auth_token(&server),
+                "get_crash_raw did not send the API token despite use_auth = true"
+            );
+        });
+    }
+
+    /// Assert that `error` is an `UnexpectedStatus` naming `expected_status`
+    /// and a URL mentioning `expected_path`.
+    fn assert_unexpected_status(error: Error, expected_status: u16, expected_path: &str) {
+        match error {
+            Error::UnexpectedStatus { status, url } => {
+                assert_eq!(status, expected_status);
+                assert!(
+                    url.contains(expected_path),
+                    "url {url} does not name the endpoint {expected_path}"
+                );
+            }
+            other => panic!("expected Error::UnexpectedStatus, got {other:?}"),
+        }
+    }
+
+    /// Assert that `error` is a reqwest-backed `Http` error carrying
+    /// `expected_status`, i.e. that a genuine 4xx/5xx was *not* rerouted to
+    /// `UnexpectedStatus` and so kept reqwest's richer context.
+    fn assert_http_error_with_status(error: Error, expected_status: u16) {
+        match error {
+            Error::Http(err) => assert_eq!(
+                err.status().map(|status| status.as_u16()),
+                Some(expected_status),
+                "Http error did not carry the response status: {err}"
+            ),
+            other => panic!("expected Error::Http, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_crash_reports_an_unexpected_202_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(202, "accepted, not ready yet");
+
+        let error = client_for(&server)
+            .get_crash(CRASH_ID, false)
+            .expect_err("202 is not a body this client can use");
+
+        assert_unexpected_status(error, 202, "/ProcessedCrash/");
+    }
+
+    #[test]
+    fn get_crash_raw_reports_an_unexpected_202_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(202, "accepted, not ready yet");
+
+        let error = client_for(&server)
+            .get_crash_raw(CRASH_ID, false)
+            .expect_err("202 is not a body this client can use");
+
+        assert_unexpected_status(error, 202, "/ProcessedCrash/");
+    }
+
+    #[test]
+    fn get_bugs_reports_an_unexpected_202_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(202, "accepted, not ready yet");
+
+        let error = client_for(&server)
+            .get_bugs(&["OOM | small".to_string()])
+            .expect_err("202 is not a body this client can use");
+
+        assert_unexpected_status(error, 202, "/Bugs/");
+    }
+
+    #[test]
+    fn get_signatures_by_bugs_reports_an_unexpected_202_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(202, "accepted, not ready yet");
+
+        let error = client_for(&server)
+            .get_signatures_by_bugs(&[1234567])
+            .expect_err("202 is not a body this client can use");
+
+        assert_unexpected_status(error, 202, "/SignaturesByBugs/");
+    }
+
+    #[test]
+    fn search_reports_an_unexpected_202_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(202, "accepted, not ready yet");
+
+        let error = client_for(&server)
+            .search(minimal_search_params())
+            .expect_err("202 is not a body this client can use");
+
+        assert_unexpected_status(error, 202, "/SuperSearch/");
+    }
+
+    #[test]
+    fn get_crash_reports_an_unexpected_301_without_panicking() {
+        // A redirect the client is not configured to follow is the other
+        // non-error status that can reach the fallthrough arm.
+        let server = TestServer::start();
+        server.push_response(301, "moved");
+
+        let error = client_for(&server)
+            .get_crash(CRASH_ID, false)
+            .expect_err("an unfollowed redirect yields no usable body");
+
+        assert_unexpected_status(error, 301, "/ProcessedCrash/");
+    }
+
+    #[test]
+    fn get_crash_maps_a_genuine_500_to_an_http_error() {
+        let server = TestServer::start();
+        server.push_response(500, "upstream exploded");
+
+        let error = client_for(&server)
+            .get_crash(CRASH_ID, false)
+            .expect_err("500 is a failure");
+
+        assert_http_error_with_status(error, 500);
+    }
+
+    #[test]
+    fn search_maps_a_genuine_500_to_an_http_error() {
+        let server = TestServer::start();
+        server.push_response(500, "upstream exploded");
+
+        let error = client_for(&server)
+            .search(minimal_search_params())
+            .expect_err("500 is a failure");
+
+        assert_http_error_with_status(error, 500);
+    }
+
+    #[test]
+    fn get_bugs_maps_a_genuine_400_to_an_http_error() {
+        let server = TestServer::start();
+        server.push_response(400, "bad request");
+
+        let error = client_for(&server)
+            .get_bugs(&["OOM | small".to_string()])
+            .expect_err("400 is a failure");
+
+        assert_http_error_with_status(error, 400);
+    }
+
+    #[test]
+    fn get_crash_maps_404_to_not_found() {
+        let server = TestServer::start();
+        server.push_response(404, "not found");
+
+        let error = client_for(&server)
+            .get_crash(CRASH_ID, false)
+            .expect_err("404 is a failure");
+
+        match error {
+            Error::NotFound(id) => assert_eq!(id, CRASH_ID),
+            other => panic!("expected Error::NotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_crash_raw_maps_404_to_not_found() {
+        let server = TestServer::start();
+        server.push_response(404, "not found");
+
+        let error = client_for(&server)
+            .get_crash_raw(CRASH_ID, false)
+            .expect_err("404 is a failure");
+
+        match error {
+            Error::NotFound(id) => assert_eq!(id, CRASH_ID),
+            other => panic!("expected Error::NotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_crash_maps_429_to_rate_limited() {
+        let server = TestServer::start();
+        server.push_response(429, "slow down");
+
+        let error = client_for(&server)
+            .get_crash(CRASH_ID, false)
+            .expect_err("429 is a failure");
+
+        assert!(matches!(error, Error::RateLimited), "got {error:?}");
+    }
+
+    #[test]
+    fn get_crash_raw_maps_429_to_rate_limited() {
+        let server = TestServer::start();
+        server.push_response(429, "slow down");
+
+        let error = client_for(&server)
+            .get_crash_raw(CRASH_ID, false)
+            .expect_err("429 is a failure");
+
+        assert!(matches!(error, Error::RateLimited), "got {error:?}");
+    }
+
+    #[test]
+    fn get_bugs_maps_429_to_rate_limited() {
+        let server = TestServer::start();
+        server.push_response(429, "slow down");
+
+        let error = client_for(&server)
+            .get_bugs(&["OOM | small".to_string()])
+            .expect_err("429 is a failure");
+
+        assert!(matches!(error, Error::RateLimited), "got {error:?}");
+    }
+
+    #[test]
+    fn get_signatures_by_bugs_maps_429_to_rate_limited() {
+        let server = TestServer::start();
+        server.push_response(429, "slow down");
+
+        let error = client_for(&server)
+            .get_signatures_by_bugs(&[1234567])
+            .expect_err("429 is a failure");
+
+        assert!(matches!(error, Error::RateLimited), "got {error:?}");
+    }
+
+    #[test]
+    fn search_maps_429_to_rate_limited() {
+        let server = TestServer::start();
+        server.push_response(429, "slow down");
+
+        let error = client_for(&server)
+            .search(minimal_search_params())
+            .expect_err("429 is a failure");
+
+        assert!(matches!(error, Error::RateLimited), "got {error:?}");
+    }
+
+    #[test]
+    fn get_crash_raw_returns_the_body_on_200() {
+        // Guards the error-mapping tests above against passing vacuously: the
+        // OK arm must still hand back a parsed body.
+        let server = TestServer::start();
+        server.push_response(200, r#"{"uuid": "abc", "signature": "OOM | small"}"#);
+
+        let value = client_for(&server)
+            .get_crash_raw(CRASH_ID, false)
+            .expect("a valid JSON body on 200 must deserialize");
+
+        assert_eq!(value["signature"], "OOM | small");
     }
 
     #[test]

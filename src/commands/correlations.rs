@@ -9,19 +9,10 @@ use sha1::{Digest, Sha1};
 
 use crate::models::{CorrelationsResponse, CorrelationsTotals};
 use crate::output::{OutputFormat, compact, json, markdown};
-use crate::{Error, Result, truncate_on_char_boundary};
+use crate::{Error, PREVIEW_BYTES, Result, status_error, truncate_on_char_boundary};
 
 const CDN_BASE: &str =
     "https://analysis-output.telemetry.mozilla.org/top-signatures-correlations/data";
-
-/// How much of an unparseable response body to quote in [`Error::ParseError`].
-///
-/// This module fetches gzipped JSON from a CDN, so a body that fails to
-/// deserialize is typically an error page or a truncated object -- arbitrary
-/// text, which may put a multi-byte character across the cap. The preview is
-/// therefore cut with [`truncate_on_char_boundary`] rather than by slicing at a
-/// byte offset, which panics whenever the offset is not a character boundary.
-const PREVIEW_BYTES: usize = 200;
 
 pub fn signature_hash(sig: &str) -> String {
     let mut hasher = Sha1::new();
@@ -34,6 +25,10 @@ pub fn signature_hash(sig: &str) -> String {
     out
 }
 
+/// Fetch the per-channel crash totals from the CDN's `all.json.gz`.
+///
+/// Only `200` is a success here; every other status, including a `404` for a
+/// missing object, is classified by [`status_error`].
 fn fetch_totals(client: &reqwest::blocking::Client, base_url: &str) -> Result<CorrelationsTotals> {
     let url = format!("{}/all.json.gz", base_url);
     let response = client.get(&url).send()?;
@@ -49,10 +44,15 @@ fn fetch_totals(client: &reqwest::blocking::Client, base_url: &str) -> Result<Co
                 ))
             })
         }
-        _ => Err(Error::Http(response.error_for_status().unwrap_err())),
+        _ => Err(status_error(response)),
     }
 }
 
+/// Fetch one signature's correlations from `<channel>/<sha1>.json.gz`.
+///
+/// A `404` is expected rather than exceptional -- the CDN only publishes the
+/// top ~200 signatures per channel -- so it maps to [`Error::NotFound`] with an
+/// explanation. Everything else is classified by [`status_error`].
 fn fetch_signature_correlations(
     client: &reqwest::blocking::Client,
     base_url: &str,
@@ -79,7 +79,7 @@ fn fetch_signature_correlations(
              Correlations are only available for the top ~200 signatures per channel.",
             signature, channel
         ))),
-        _ => Err(Error::Http(response.error_for_status().unwrap_err())),
+        _ => Err(status_error(response)),
     }
 }
 
@@ -143,7 +143,7 @@ mod tests {
     /// A body that is not JSON and whose byte 200 lands inside a multi-byte
     /// character: 199 ASCII bytes then a three-byte em dash spanning 199..202.
     /// This is the exact shape that makes a naive `&text[..200]` preview slice
-    /// panic with "byte index 200 is not a char boundary".
+    /// panic with "end byte index 200 is not a char boundary".
     fn body_split_mid_utf8_sequence() -> String {
         let body = format!("{}\u{2014}", "a".repeat(199));
         assert_eq!(body.len(), 202);
@@ -241,6 +241,120 @@ mod tests {
             requests[0].path,
             "/nightly/4361bb82d8d8c7f34466f8b7589fbd6c920da702.json.gz"
         );
+    }
+
+    #[test]
+    fn fetch_totals_maps_an_unhandled_success_status_to_unexpected_status() {
+        let server = TestServer::start();
+        // 202 is neither a client nor a server error, so `error_for_status`
+        // hands back `Ok`; the old `_` arm unwrapped that as an error.
+        server.push_response(202, "accepted, not ready yet");
+
+        let error = fetch_totals(&client(), &server.base_url())
+            .expect_err("a 202 must not be reported as totals");
+
+        match error {
+            Error::UnexpectedStatus { status, url } => {
+                assert_eq!(status, 202);
+                assert_eq!(url, format!("{}/all.json.gz", server.base_url()));
+            }
+            other => panic!("expected Error::UnexpectedStatus, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fetch_signature_correlations_maps_an_unhandled_success_status_to_unexpected_status() {
+        let server = TestServer::start();
+        server.push_response(202, "accepted, not ready yet");
+
+        let error =
+            fetch_signature_correlations(&client(), &server.base_url(), "OOM | small", "nightly")
+                .expect_err("a 202 must not be reported as correlations");
+
+        match error {
+            Error::UnexpectedStatus { status, url } => {
+                assert_eq!(status, 202);
+                assert!(
+                    url.ends_with(".json.gz"),
+                    "unexpected-status url should name the CDN object: {url}"
+                );
+            }
+            other => panic!("expected Error::UnexpectedStatus, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fetch_totals_maps_a_server_error_to_http() {
+        let server = TestServer::start();
+        server.push_response(500, "upstream exploded");
+
+        let error = fetch_totals(&client(), &server.base_url())
+            .expect_err("a 500 must not be reported as totals");
+
+        // A genuine 5xx keeps reqwest's richer error rather than being
+        // flattened into UnexpectedStatus.
+        match error {
+            Error::Http(err) => {
+                assert_eq!(err.status().map(|s| s.as_u16()), Some(500));
+            }
+            other => panic!("expected Error::Http, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fetch_signature_correlations_maps_a_server_error_to_http() {
+        let server = TestServer::start();
+        server.push_response(503, "try later");
+
+        let error =
+            fetch_signature_correlations(&client(), &server.base_url(), "OOM | small", "nightly")
+                .expect_err("a 503 must not be reported as correlations");
+
+        match error {
+            Error::Http(err) => {
+                assert_eq!(err.status().map(|s| s.as_u16()), Some(503));
+            }
+            other => panic!("expected Error::Http, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fetch_totals_maps_404_to_http_through_its_fallthrough() {
+        let server = TestServer::start();
+        server.push_response(404, "no such object");
+
+        let error = fetch_totals(&client(), &server.base_url())
+            .expect_err("a 404 must not be reported as totals");
+
+        // `fetch_totals` handles only 200 explicitly, so a missing
+        // `all.json.gz` has always been an Error::Http. Keep it there: the
+        // unexpected-status path is for statuses reqwest does not treat as
+        // errors at all.
+        match error {
+            Error::Http(err) => {
+                assert_eq!(err.status().map(|s| s.as_u16()), Some(404));
+            }
+            other => panic!("expected Error::Http, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fetch_signature_correlations_maps_404_to_not_found() {
+        let server = TestServer::start();
+        server.push_response(404, "no such object");
+
+        let error =
+            fetch_signature_correlations(&client(), &server.base_url(), "OOM | small", "nightly")
+                .expect_err("a 404 must not be reported as correlations");
+
+        match error {
+            Error::NotFound(message) => {
+                assert!(message.contains("OOM | small"), "{message}");
+                assert!(message.contains("nightly"), "{message}");
+                assert!(message.contains("top ~200 signatures"), "{message}");
+            }
+            other => panic!("expected Error::NotFound, got {other:?}"),
+        }
     }
 
     #[test]
