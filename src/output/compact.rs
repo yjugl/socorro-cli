@@ -6,9 +6,13 @@
 //!
 //! For a crash this emits the identity and metadata lines (`sig:`, `reason:`,
 //! `type:`, `product:`, ...), the crashing thread's stack (or every thread),
-//! and optionally the module list. The crash annotations gathered in
-//! [`CrashSummary`] are split in two: the cheap ones share the always-on
-//! `type:` line, while the verbose ones are rendered only by
+//! and optionally the module list. Under `--all-threads` the stacks are
+//! preceded by a `threads: N total, M distinct stacks shown` line (with
+//! `stack` singular when `M` is 1), and threads
+//! that [`CrashSummary`] grouped as having identical truncated stacks share one
+//! `stack[K threads: ...]:` block naming every member. The crash annotations
+//! gathered in [`CrashSummary`] are split in two: the cheap ones share the
+//! always-on `type:` line, while the verbose ones are rendered only by
 //! [`format_annotations`], which the caller appends on request.
 
 use crate::commands::crash_pings::format_frame_location;
@@ -16,7 +20,7 @@ use crate::models::bugs::BugsSummary;
 use crate::models::crash_pings::{CrashPingStackSummary, CrashPingsSummary};
 use crate::models::{
     AsyncShutdownTimeout, CorrelationsSummary, CrashSummary, ModulesMode, SearchResponse,
-    ShutdownCondition, StackFrame,
+    ShutdownCondition, StackFrame, ThreadSummary,
 };
 use std::collections::HashSet;
 
@@ -37,6 +41,85 @@ fn format_function(frame: &StackFrame) -> String {
             parts.join(" ")
         }
     }
+}
+
+/// `index:name` for one thread, with `unknown` standing in for a missing name.
+fn thread_label(index: usize, name: Option<&str>) -> String {
+    format!("{}:{}", index, name.unwrap_or("unknown"))
+}
+
+/// `"s"` unless `count` is exactly 1, for pluralizing a noun inline.
+///
+/// Takes `u64` because one caller counts threads from a `u64` annotation while
+/// the others count collection lengths; widening a `usize` is lossless on every
+/// target Rust supports, whereas narrowing the annotation would not be.
+fn plural_s(count: u64) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
+/// The `threads:` line introducing the `--all-threads` section.
+///
+/// Both counts are derived from the summaries rather than stored: `distinct` is
+/// how many `stack[...]` blocks follow, and `total` counts each block's
+/// representative plus the threads folded into it. It is emitted whenever any
+/// thread summary exists — even when nothing was folded and the two numbers are
+/// equal — so machine consumers can rely on the line being there.
+///
+/// `stack` agrees in number with `distinct`, which is routinely 1 at low
+/// `--depth` where every thread collapses into one group. `threads:` is a fixed
+/// label rather than a counted noun, so it stays plural throughout.
+fn format_thread_counts(threads: &[ThreadSummary]) -> String {
+    let distinct = threads.len();
+    let total: usize = threads.iter().map(|t| 1 + t.identical_threads.len()).sum();
+    format!(
+        "threads: {} total, {} distinct stack{} shown\n",
+        total,
+        distinct,
+        plural_s(distinct as u64)
+    )
+}
+
+/// One `stack[...]:` header line.
+///
+/// A summary with nothing folded into it keeps the historical single-thread
+/// form, `stack[thread 0:GeckoMain [CRASHING]]:`. One that represents a group
+/// names every member as `index:name`, representative first and then the
+/// `identical_threads` in increasing index order:
+/// `stack[8 threads: 5:TaskController #0, 6:TaskController #1, ...]:`.
+///
+/// The line is never wrapped and no member is elided, however long it gets: a
+/// two-space-indented continuation would be indistinguishable from a frame
+/// line, and compact output is parsed by tooling.
+fn format_thread_header(thread: &ThreadSummary) -> String {
+    let crash_marker = if thread.is_crashing {
+        " [CRASHING]"
+    } else {
+        ""
+    };
+    let representative = format!(
+        "{}{}",
+        thread_label(thread.thread_index, thread.thread_name.as_deref()),
+        crash_marker
+    );
+
+    if thread.identical_threads.is_empty() {
+        return format!("stack[thread {}]:\n", representative);
+    }
+
+    let mut members = Vec::with_capacity(1 + thread.identical_threads.len());
+    members.push(representative);
+    for member in &thread.identical_threads {
+        members.push(thread_label(
+            member.thread_index,
+            member.thread_name.as_deref(),
+        ));
+    }
+
+    format!(
+        "stack[{} threads: {}]:\n",
+        members.len(),
+        members.join(", ")
+    )
 }
 
 pub fn format_crash(summary: &CrashSummary, modules_mode: ModulesMode) -> String {
@@ -91,17 +174,10 @@ pub fn format_crash(summary: &CrashSummary, modules_mode: ModulesMode) -> String
 
     if !summary.all_threads.is_empty() {
         output.push('\n');
+        output.push_str(&format_thread_counts(&summary.all_threads));
+        output.push('\n');
         for thread in &summary.all_threads {
-            let thread_name = thread.thread_name.as_deref().unwrap_or("unknown");
-            let crash_marker = if thread.is_crashing {
-                " [CRASHING]"
-            } else {
-                ""
-            };
-            output.push_str(&format!(
-                "stack[thread {}:{}{}]:\n",
-                thread.thread_index, thread_name, crash_marker
-            ));
+            output.push_str(&format_thread_header(thread));
 
             for frame in &thread.frames {
                 let func = format_function(frame);
@@ -217,6 +293,10 @@ fn one_line(value: &str) -> String {
 /// The always-on `type:` line: report type, process, uptime, thread count and,
 /// when true, that this was a startup crash. Returns the empty string when the
 /// crash carries none of those, so no blank line is ever emitted.
+///
+/// `thread` agrees in number with the count, so a single-threaded crash reads
+/// `| 1 thread`. Single-threaded crashes are not exotic: SuperSearch reports
+/// 1102 of them for `thread_count=1` as of 2026-09-02.
 fn format_type_line(summary: &CrashSummary) -> String {
     let mut parts: Vec<String> = Vec::new();
 
@@ -230,7 +310,7 @@ fn format_type_line(summary: &CrashSummary) -> String {
         parts.push(format!("uptime {}s", uptime));
     }
     if let Some(thread_count) = summary.thread_count {
-        parts.push(format!("{} threads", thread_count));
+        parts.push(format!("{} thread{}", thread_count, plural_s(thread_count)));
     }
     // Only the true case carries information: the overwhelming majority of
     // crashes are not startup crashes, so `startup_crash: false` is noise.
@@ -380,7 +460,7 @@ mod tests {
     use super::*;
     use crate::models::{
         AsyncShutdownTimeoutData, CrashHit, CrashSummary, FacetBucket, ModuleInfo, ModulesMode,
-        ThreadSummary,
+        ThreadRef, ThreadSummary,
     };
     use std::collections::HashMap;
 
@@ -544,6 +624,206 @@ mod tests {
 
         assert!(output.contains("stack[thread 0:MainThread]:"));
         assert!(output.contains("stack[thread 1:GraphRunner [CRASHING]]:"));
+    }
+
+    /// A crashing thread on its own plus one group of four idle threads, the
+    /// last of which has no name. Total is 5, distinct is 2.
+    fn sample_crash_summary_with_grouped_threads() -> CrashSummary {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![
+            ThreadSummary {
+                thread_index: 0,
+                thread_name: Some("MainThread".to_string()),
+                frames: vec![],
+                is_crashing: false,
+                identical_threads: vec![],
+            },
+            ThreadSummary {
+                thread_index: 5,
+                thread_name: Some("TaskController #0".to_string()),
+                frames: vec![],
+                is_crashing: false,
+                identical_threads: vec![
+                    ThreadRef {
+                        thread_index: 6,
+                        thread_name: Some("TaskController #1".to_string()),
+                    },
+                    ThreadRef {
+                        thread_index: 7,
+                        thread_name: Some("TaskController #2".to_string()),
+                    },
+                    ThreadRef {
+                        thread_index: 9,
+                        thread_name: None,
+                    },
+                ],
+            },
+        ];
+        summary
+    }
+
+    /// Pull the single line containing `needle` out of `output`, panicking if
+    /// it is absent or ambiguous.
+    fn line_containing<'a>(output: &'a str, needle: &str) -> &'a str {
+        let matches: Vec<&str> = output.lines().filter(|l| l.contains(needle)).collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected exactly one line containing {:?}, got {:?}",
+            needle,
+            matches
+        );
+        matches[0]
+    }
+
+    #[test]
+    fn test_format_crash_all_threads_count_line() {
+        let summary = sample_crash_summary_with_grouped_threads();
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert!(output.contains("threads: 5 total, 2 distinct stacks shown\n"));
+        // The count line is followed by a blank line, then the first stack.
+        assert!(output.contains("threads: 5 total, 2 distinct stacks shown\n\nstack["));
+    }
+
+    #[test]
+    fn test_format_crash_all_threads_count_line_present_when_nothing_grouped() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![
+            ThreadSummary {
+                thread_index: 0,
+                thread_name: Some("MainThread".to_string()),
+                frames: vec![],
+                is_crashing: false,
+                identical_threads: vec![],
+            },
+            ThreadSummary {
+                thread_index: 1,
+                thread_name: Some("GraphRunner".to_string()),
+                frames: vec![],
+                is_crashing: true,
+                identical_threads: vec![],
+            },
+        ];
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert!(output.contains("threads: 2 total, 2 distinct stacks shown\n"));
+    }
+
+    /// One thread, on its own: both counts are 1, so `stack` is singular.
+    #[test]
+    fn test_format_crash_all_threads_count_line_singular_stack() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![ThreadSummary {
+            thread_index: 0,
+            thread_name: Some("MainThread".to_string()),
+            frames: vec![],
+            is_crashing: true,
+            identical_threads: vec![],
+        }];
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert_eq!(
+            line_containing(&output, "distinct stack"),
+            "threads: 1 total, 1 distinct stack shown"
+        );
+    }
+
+    /// Two threads folded into one group: `threads:` is a fixed label and stays
+    /// as it is, while `stack` follows the distinct count and goes singular.
+    #[test]
+    fn test_format_crash_all_threads_count_line_plural_total_singular_stack() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![ThreadSummary {
+            thread_index: 0,
+            thread_name: Some("MainThread".to_string()),
+            frames: vec![],
+            is_crashing: false,
+            identical_threads: vec![ThreadRef {
+                thread_index: 1,
+                thread_name: Some("GraphRunner".to_string()),
+            }],
+        }];
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert_eq!(
+            line_containing(&output, "distinct stack"),
+            "threads: 2 total, 1 distinct stack shown"
+        );
+    }
+
+    #[test]
+    fn test_format_crash_all_threads_single_member_header_unchanged() {
+        let summary = sample_crash_summary_with_grouped_threads();
+        let output = format_crash(&summary, ModulesMode::None);
+
+        // Byte-exact historical form for an ungrouped thread.
+        assert_eq!(
+            line_containing(&output, "MainThread"),
+            "stack[thread 0:MainThread]:"
+        );
+    }
+
+    #[test]
+    fn test_format_crash_all_threads_group_header_lists_every_member() {
+        let summary = sample_crash_summary_with_grouped_threads();
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert_eq!(
+            line_containing(&output, "TaskController #0"),
+            "stack[4 threads: 5:TaskController #0, 6:TaskController #1, \
+             7:TaskController #2, 9:unknown]:"
+        );
+    }
+
+    #[test]
+    fn test_format_crash_all_threads_group_header_is_one_line() {
+        let summary = sample_crash_summary_with_grouped_threads();
+        let output = format_crash(&summary, ModulesMode::None);
+
+        let start = output
+            .find("stack[4 threads:")
+            .expect("group header missing");
+        let end = output[start..]
+            .find("]:")
+            .expect("group header unterminated")
+            + start;
+        assert!(
+            !output[start..end].contains('\n'),
+            "group header was wrapped: {:?}",
+            &output[start..end]
+        );
+    }
+
+    #[test]
+    fn test_format_crash_all_threads_unnamed_member_renders_unknown() {
+        let summary = sample_crash_summary_with_grouped_threads();
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert!(line_containing(&output, "TaskController #0").contains("9:unknown"));
+    }
+
+    #[test]
+    fn test_format_crash_all_threads_group_marks_crashing_representative() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![ThreadSummary {
+            thread_index: 3,
+            thread_name: Some("Worker".to_string()),
+            frames: vec![],
+            is_crashing: true,
+            identical_threads: vec![ThreadRef {
+                thread_index: 4,
+                thread_name: Some("Worker 2".to_string()),
+            }],
+        }];
+        let output = format_crash(&summary, ModulesMode::None);
+
+        // The model never groups the crashing thread, but if it ever did the
+        // marker must sit on the representative rather than on the last member.
+        assert_eq!(
+            line_containing(&output, "Worker"),
+            "stack[2 threads: 3:Worker [CRASHING], 4:Worker 2]:"
+        );
     }
 
     #[test]
@@ -969,6 +1249,33 @@ mod tests {
             type_line(&format_crash(&summary, ModulesMode::None)),
             Some("type: content")
         );
+    }
+
+    /// A single-threaded crash: `thread` is singular. Real and not rare --
+    /// `7b7dcaf0-2985-43f6-af63-6209d0260826` is one.
+    #[test]
+    fn test_compact_crash_type_line_thread_count_singular() {
+        let mut summary = hang_summary();
+        summary.thread_count = Some(1);
+        assert_eq!(
+            type_line(&format_crash(&summary, ModulesMode::None)),
+            Some("type: hang | parent | uptime 2175s | 1 thread")
+        );
+    }
+
+    /// Every count other than 1 stays plural, including 0 and the two-thread
+    /// case that sits right next to the singular boundary.
+    #[test]
+    fn test_compact_crash_type_line_thread_count_plural() {
+        let mut summary = hang_summary();
+
+        for count in [0u64, 2, 64] {
+            summary.thread_count = Some(count);
+            assert_eq!(
+                type_line(&format_crash(&summary, ModulesMode::None)),
+                Some(format!("type: hang | parent | uptime 2175s | {} threads", count).as_str())
+            );
+        }
     }
 
     fn condition(
