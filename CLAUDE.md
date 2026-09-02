@@ -1,8 +1,11 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides shared project guidance to Claude Code and Codex when
+working with code in this repository. Claude Code loads it directly; Codex is
+directed here by `AGENTS.md`.
 
-Personal, machine-local notes (not checked in) live in `CLAUDE.local.md`:
+Personal, machine-local notes (not checked in) live in `CLAUDE.local.md`.
+Claude Code imports them below; Codex's `AGENTS.md` tells it when to read them:
 
 @CLAUDE.local.md
 

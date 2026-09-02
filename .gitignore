@@ -2,7 +2,7 @@
 /socorro/
 /THIRD-PARTY-LICENSES.txt
 
-# Claude Code local files (personal, not shared)
+# Local agent files (personal, shared by Claude Code and Codex)
 .claude/settings.local.json
 .claude/runs/
 CLAUDE.local.md
