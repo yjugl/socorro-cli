@@ -18,7 +18,11 @@ use crate::{Error, Result};
 
 const BASE_URL: &str = "https://crash-pings.mozilla.org";
 
-fn fetch_ping_data(client: &reqwest::blocking::Client, date: &str) -> Result<CrashPingsResponse> {
+fn fetch_ping_data(
+    client: &reqwest::blocking::Client,
+    base_url: &str,
+    date: &str,
+) -> Result<CrashPingsResponse> {
     let cache_key = format!("crash-pings-{}.json", date);
 
     // Try cache first
@@ -28,7 +32,7 @@ fn fetch_ping_data(client: &reqwest::blocking::Client, date: &str) -> Result<Cra
         return Ok(resp);
     }
 
-    let url = format!("{}/ping_data/{}", BASE_URL, date);
+    let url = format!("{}/ping_data/{}", base_url, date);
     let response = client.get(&url).send()?;
 
     match response.status() {
@@ -60,10 +64,11 @@ fn fetch_ping_data(client: &reqwest::blocking::Client, date: &str) -> Result<Cra
 
 fn fetch_stack(
     client: &reqwest::blocking::Client,
+    base_url: &str,
     date: &str,
     crash_id: &str,
 ) -> Result<CrashPingStackResponse> {
-    let url = format!("{}/stack/{}/{}", BASE_URL, date, crash_id);
+    let url = format!("{}/stack/{}/{}", base_url, date, crash_id);
     let response = client.get(&url).send()?;
 
     match response.status() {
@@ -189,7 +194,7 @@ pub fn execute(
 
     if let Some(crash_id) = stack_id {
         // Stack mode (date_from == date_to since --stack conflicts with range args)
-        let resp = fetch_stack(&client, date_from, crash_id)?;
+        let resp = fetch_stack(&client, BASE_URL, date_from, crash_id)?;
         let frames = resp.stack.unwrap_or_default();
         let summary = CrashPingStackSummary {
             crash_id: crash_id.to_string(),
@@ -214,7 +219,7 @@ pub fn execute(
                 eprint!("\rFetching crash pings: {}/{}...", idx + 1, dates.len());
                 std::io::stderr().flush().ok();
             }
-            match fetch_ping_data(&client, date) {
+            match fetch_ping_data(&client, BASE_URL, date) {
                 Ok(resp) => responses.push(resp),
                 Err(Error::NotFound(_)) | Err(Error::ParseError(_)) => {
                     // 404 or 202 — skip with warning

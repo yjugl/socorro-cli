@@ -25,8 +25,8 @@ pub fn signature_hash(sig: &str) -> String {
     out
 }
 
-fn fetch_totals(client: &reqwest::blocking::Client) -> Result<CorrelationsTotals> {
-    let url = format!("{}/all.json.gz", CDN_BASE);
+fn fetch_totals(client: &reqwest::blocking::Client, base_url: &str) -> Result<CorrelationsTotals> {
+    let url = format!("{}/all.json.gz", base_url);
     let response = client.get(&url).send()?;
 
     match response.status() {
@@ -41,11 +41,12 @@ fn fetch_totals(client: &reqwest::blocking::Client) -> Result<CorrelationsTotals
 
 fn fetch_signature_correlations(
     client: &reqwest::blocking::Client,
+    base_url: &str,
     signature: &str,
     channel: &str,
 ) -> Result<CorrelationsResponse> {
     let hash = signature_hash(signature);
-    let url = format!("{}/{}/{}.json.gz", CDN_BASE, channel, hash);
+    let url = format!("{}/{}/{}.json.gz", base_url, channel, hash);
     let response = client.get(&url).send()?;
 
     match response.status() {
@@ -66,7 +67,7 @@ fn fetch_signature_correlations(
 pub fn execute(signature: &str, channel: &str, format: OutputFormat) -> Result<()> {
     let client = reqwest::blocking::Client::builder().gzip(true).build()?;
 
-    let totals = fetch_totals(&client)?;
+    let totals = fetch_totals(&client, CDN_BASE)?;
 
     if totals.total_for_channel(channel).is_none() {
         return Err(Error::ParseError(format!(
@@ -75,7 +76,7 @@ pub fn execute(signature: &str, channel: &str, format: OutputFormat) -> Result<(
         )));
     }
 
-    let response = fetch_signature_correlations(&client, signature, channel)?;
+    let response = fetch_signature_correlations(&client, CDN_BASE, signature, channel)?;
 
     let output = match format {
         OutputFormat::Compact => {
