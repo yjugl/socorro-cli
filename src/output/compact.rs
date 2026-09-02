@@ -530,12 +530,14 @@ mod tests {
                 thread_name: Some("MainThread".to_string()),
                 frames: vec![],
                 is_crashing: false,
+                ..Default::default()
             },
             ThreadSummary {
                 thread_index: 1,
                 thread_name: Some("GraphRunner".to_string()),
                 frames: vec![],
                 is_crashing: true,
+                ..Default::default()
             },
         ];
         let output = format_crash(&summary, ModulesMode::None);
@@ -594,6 +596,7 @@ mod tests {
                     offset: None,
                 }],
                 is_crashing: false,
+                ..Default::default()
             },
             ThreadSummary {
                 thread_index: 1,
@@ -607,6 +610,7 @@ mod tests {
                     offset: None,
                 }],
                 is_crashing: true,
+                ..Default::default()
             },
         ];
         let output = format_crash(&summary, ModulesMode::Stack);

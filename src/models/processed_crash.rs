@@ -97,12 +97,24 @@ pub struct Thread {
     pub frames: Vec<StackFrame>,
 }
 
-#[derive(Debug, Clone)]
+/// A thread that was folded into another thread's `ThreadSummary` because
+/// their truncated frame lists are identical.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ThreadRef {
+    pub thread_index: usize,
+    pub thread_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct ThreadSummary {
     pub thread_index: usize,
     pub thread_name: Option<String>,
     pub frames: Vec<StackFrame>,
     pub is_crashing: bool,
+    /// The other threads whose truncated frame list is identical to this one's,
+    /// in increasing `thread_index` order. Empty unless `all_threads` grouping
+    /// folded threads together; always empty for the crashing thread.
+    pub identical_threads: Vec<ThreadRef>,
 }
 
 #[derive(Debug, Default)]
@@ -157,6 +169,24 @@ impl ProcessedCrash {
     /// (plus every thread when `all_threads` is set), the module list, and the
     /// crash annotations. Annotations are always populated; formatters decide
     /// which of them to render.
+    ///
+    /// When `all_threads` is set, threads whose frame lists are equal *after*
+    /// truncation to `depth` are collapsed into a single `ThreadSummary`: the
+    /// lowest-index member is the representative and the rest are listed in its
+    /// `identical_threads`, in increasing index order. Groups themselves come
+    /// out ordered by their lowest member index, so output order stays close to
+    /// the thread order. Most threads in a real minidump are idle and share a
+    /// stack, so this is a large saving: the 64 threads of
+    /// b98bbb81-3ff6-4825-991f-6a0b30260901 have only 30 distinct frame lists
+    /// at depth 10 (12 at depth 1). Because the comparison is on the
+    /// *truncated* list, two
+    /// threads that agree on their first N frames group at `depth == N` and
+    /// split at a larger depth — which matches what the reader is shown.
+    ///
+    /// The crashing thread is never grouped, in either direction, so that the
+    /// `[CRASHING]` marker refers to exactly one thread even when another
+    /// thread has a byte-identical stack. Total and distinct thread counts are
+    /// derived by the formatters from `all_threads`; no field carries them.
     pub fn to_summary(&self, depth: usize, all_threads: bool) -> CrashSummary {
         let crashing_thread_idx = self
             .crashing_thread
@@ -184,11 +214,31 @@ impl ProcessedCrash {
                 for (idx, thread) in threads.iter().enumerate() {
                     let frames: Vec<StackFrame> =
                         thread.frames.iter().take(depth).cloned().collect();
+                    let is_crashing = Some(idx) == crashing_thread_idx;
+
+                    // The crashing thread neither joins a group nor accepts
+                    // members, so its `[CRASHING]` marker stays unambiguous.
+                    // Threads are visited in increasing index order, so the
+                    // first match is always the lowest-index representative and
+                    // members accumulate in increasing order.
+                    if !is_crashing
+                        && let Some(group) = all_thread_summaries
+                            .iter_mut()
+                            .find(|g: &&mut ThreadSummary| !g.is_crashing && g.frames == frames)
+                    {
+                        group.identical_threads.push(ThreadRef {
+                            thread_index: idx,
+                            thread_name: thread.thread_name.clone(),
+                        });
+                        continue;
+                    }
+
                     all_thread_summaries.push(ThreadSummary {
                         thread_index: idx,
                         thread_name: thread.thread_name.clone(),
                         frames,
-                        is_crashing: Some(idx) == crashing_thread_idx,
+                        is_crashing,
+                        identical_threads: Vec::new(),
                     });
                 }
             }
@@ -742,5 +792,229 @@ mod tests {
         assert!(summary.modules[0].debug_id.is_none());
         assert!(summary.modules[0].code_id.is_none());
         assert!(summary.modules[0].version.is_none());
+    }
+
+    /// Two threads with a byte-identical single-frame stack, one of which is
+    /// the crashing thread.
+    fn crashing_twin_crash_json() -> &'static str {
+        r#"{
+            "uuid": "crashing-twin",
+            "crashing_thread": 1,
+            "threads": [
+                {
+                    "thread": 0,
+                    "thread_name": "Idle",
+                    "frames": [
+                        {"frame": 0, "function": "ZwWaitForAlertByThreadId", "module": "ntdll.dll"}
+                    ]
+                },
+                {
+                    "thread": 1,
+                    "thread_name": "Crasher",
+                    "frames": [
+                        {"frame": 0, "function": "ZwWaitForAlertByThreadId", "module": "ntdll.dll"}
+                    ]
+                }
+            ]
+        }"#
+    }
+
+    /// Two pairs of identical stacks interleaved, plus a crashing thread whose
+    /// stack matches the first pair. Grouped, this is three entries with
+    /// representatives 0, 1 and 4 — so the members of the first group (index 2)
+    /// sort after the representative of the second (index 1), which is what
+    /// makes "ordered by lowest member index" observable.
+    fn interleaved_groups_crash_json() -> &'static str {
+        r#"{
+            "uuid": "interleaved-groups",
+            "crashing_thread": 4,
+            "threads": [
+                {"thread": 0, "thread_name": "A", "frames": [{"frame": 0, "function": "wait_a"}]},
+                {"thread": 1, "thread_name": "B", "frames": [{"frame": 0, "function": "wait_b"}]},
+                {"thread": 2, "thread_name": "C", "frames": [{"frame": 0, "function": "wait_a"}]},
+                {"thread": 3, "thread_name": "D", "frames": [{"frame": 0, "function": "wait_b"}]},
+                {"thread": 4, "thread_name": "Crasher", "frames": [{"frame": 0, "function": "wait_a"}]}
+            ]
+        }"#
+    }
+
+    /// Three threads that agree on their first two frames and diverge on the
+    /// third.
+    fn late_divergence_crash_json() -> &'static str {
+        r#"{
+            "uuid": "late-divergence",
+            "crashing_thread": 0,
+            "threads": [
+                {
+                    "thread": 0,
+                    "thread_name": "Crasher",
+                    "frames": [{"frame": 0, "function": "boom"}]
+                },
+                {
+                    "thread": 1,
+                    "thread_name": "PoolA",
+                    "frames": [
+                        {"frame": 0, "function": "start"},
+                        {"frame": 1, "function": "wait"},
+                        {"frame": 2, "function": "inner_a"}
+                    ]
+                },
+                {
+                    "thread": 2,
+                    "thread_name": "PoolB",
+                    "frames": [
+                        {"frame": 0, "function": "start"},
+                        {"frame": 1, "function": "wait"},
+                        {"frame": 2, "function": "inner_b"}
+                    ]
+                }
+            ]
+        }"#
+    }
+
+    #[test]
+    fn test_to_summary_all_threads_never_groups_crashing_thread() {
+        let crash: ProcessedCrash = serde_json::from_str(crashing_twin_crash_json()).unwrap();
+        let summary = crash.to_summary(10, true);
+
+        // Identical stacks, but the crashing thread keeps its own entry so the
+        // [CRASHING] marker stays unambiguous.
+        assert_eq!(summary.all_threads.len(), 2);
+        assert_eq!(summary.all_threads[0].thread_index, 0);
+        assert!(!summary.all_threads[0].is_crashing);
+        assert!(summary.all_threads[0].identical_threads.is_empty());
+        assert_eq!(summary.all_threads[1].thread_index, 1);
+        assert!(summary.all_threads[1].is_crashing);
+        assert!(summary.all_threads[1].identical_threads.is_empty());
+    }
+
+    #[test]
+    fn test_to_summary_all_threads_groups_identical_stacks() {
+        let crash: ProcessedCrash = serde_json::from_str(interleaved_groups_crash_json()).unwrap();
+        let summary = crash.to_summary(10, true);
+
+        assert_eq!(summary.all_threads.len(), 3);
+
+        assert_eq!(summary.all_threads[0].thread_index, 0);
+        assert_eq!(
+            summary.all_threads[0].identical_threads,
+            vec![ThreadRef {
+                thread_index: 2,
+                thread_name: Some("C".to_string()),
+            }]
+        );
+
+        assert_eq!(summary.all_threads[1].thread_index, 1);
+        assert_eq!(
+            summary.all_threads[1].identical_threads,
+            vec![ThreadRef {
+                thread_index: 3,
+                thread_name: Some("D".to_string()),
+            }]
+        );
+
+        // The crashing thread shares thread 0's stack but is never folded in.
+        assert_eq!(summary.all_threads[2].thread_index, 4);
+        assert!(summary.all_threads[2].is_crashing);
+        assert!(summary.all_threads[2].identical_threads.is_empty());
+    }
+
+    #[test]
+    fn test_to_summary_all_threads_groups_ordered_by_lowest_member_index() {
+        let crash: ProcessedCrash = serde_json::from_str(interleaved_groups_crash_json()).unwrap();
+        let summary = crash.to_summary(10, true);
+
+        let representatives: Vec<usize> =
+            summary.all_threads.iter().map(|t| t.thread_index).collect();
+        assert_eq!(representatives, vec![0, 1, 4]);
+
+        for group in &summary.all_threads {
+            let lowest = group
+                .identical_threads
+                .iter()
+                .map(|r| r.thread_index)
+                .chain(std::iter::once(group.thread_index))
+                .min()
+                .unwrap();
+            assert_eq!(
+                group.thread_index, lowest,
+                "representative of group {:?} is not its lowest-index member",
+                group.thread_index
+            );
+
+            // Members are themselves in increasing index order.
+            let members: Vec<usize> = group
+                .identical_threads
+                .iter()
+                .map(|r| r.thread_index)
+                .collect();
+            let mut sorted = members.clone();
+            sorted.sort_unstable();
+            assert_eq!(members, sorted);
+        }
+    }
+
+    #[test]
+    fn test_to_summary_without_all_threads_leaves_all_threads_empty() {
+        for json in [
+            crashing_twin_crash_json(),
+            interleaved_groups_crash_json(),
+            late_divergence_crash_json(),
+        ] {
+            let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+            let summary = crash.to_summary(10, false);
+            assert!(summary.all_threads.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_to_summary_all_threads_grouping_uses_truncated_frames() {
+        let crash: ProcessedCrash = serde_json::from_str(late_divergence_crash_json()).unwrap();
+
+        // At depth 2 the reader only sees `start` / `wait`, so the two pool
+        // threads are indistinguishable and group.
+        let shallow = crash.to_summary(2, true);
+        assert_eq!(shallow.all_threads.len(), 2);
+        assert_eq!(shallow.all_threads[1].thread_index, 1);
+        assert_eq!(
+            shallow.all_threads[1].identical_threads,
+            vec![ThreadRef {
+                thread_index: 2,
+                thread_name: Some("PoolB".to_string()),
+            }]
+        );
+
+        // At depth 3 the diverging frame is visible, so they split.
+        let deep = crash.to_summary(3, true);
+        assert_eq!(deep.all_threads.len(), 3);
+        assert!(
+            deep.all_threads
+                .iter()
+                .all(|t| t.identical_threads.is_empty())
+        );
+    }
+
+    #[test]
+    fn test_to_summary_all_threads_grouping_loses_no_thread() {
+        for (json, expected_threads) in [
+            (crashing_twin_crash_json(), 2),
+            (interleaved_groups_crash_json(), 5),
+            (late_divergence_crash_json(), 3),
+        ] {
+            for depth in [1, 2, 3, 10] {
+                let crash: ProcessedCrash = serde_json::from_str(json).unwrap();
+                let summary = crash.to_summary(depth, true);
+                let total: usize = summary
+                    .all_threads
+                    .iter()
+                    .map(|t| 1 + t.identical_threads.len())
+                    .sum();
+                assert_eq!(
+                    total, expected_threads,
+                    "grouping at depth {} lost a thread of {}",
+                    depth, json
+                );
+            }
+        }
     }
 }

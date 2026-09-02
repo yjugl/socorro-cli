@@ -13,7 +13,9 @@ pub mod search;
 pub use annotations::{AsyncShutdownTimeout, AsyncShutdownTimeoutData, ShutdownCondition};
 pub use common::*;
 pub use correlations::*;
-pub use processed_crash::{CrashInfo, CrashSummary, ProcessedCrash, Thread, ThreadSummary};
+pub use processed_crash::{
+    CrashInfo, CrashSummary, ProcessedCrash, Thread, ThreadRef, ThreadSummary,
+};
 pub use search::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]

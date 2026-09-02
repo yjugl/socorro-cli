@@ -32,7 +32,10 @@ where
     })
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `PartialEq`/`Eq` are derived so that truncated frame lists can be compared
+/// when grouping identical thread stacks; every field is a `u32` or an
+/// `Option<String>`/`Option<u32>`, so structural equality is exact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StackFrame {
     #[serde(default)]
     pub frame: u32,
