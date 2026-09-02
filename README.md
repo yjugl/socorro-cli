@@ -130,6 +130,10 @@ socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --full
 # Add crash annotations (shutdown blockers, app notes, proto signature)
 socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
 
+# Show every thread, grouping threads that share a stack (17,545 bytes for
+# this 64-thread crash, down from 80,736 before grouping and the lower depth)
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads
+
 # Limit stack trace depth
 socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --depth 5
 
@@ -276,9 +280,9 @@ Formatted output for documentation and chat interfaces.
 - `--version`/`-V`: Print version
 
 ### Crash Options
-- `--depth <N>`: Stack trace depth [default: 10]
+- `--depth <N>`: Stack trace depth [default: 10, or 5 with `--all-threads`]
 - `--full`: Print the API response verbatim as pretty-printed JSON (forces JSON format)
-- `--all-threads`: Show stacks from all threads (useful for diagnosing deadlocks)
+- `--all-threads`: Show stacks from all threads (useful for diagnosing deadlocks). Threads whose displayed frames are identical are folded into a single block whose header names every member, and the default `--depth` drops from 10 to 5. Together those took the 64-thread crash above from 80,736 bytes to 17,545 — small enough to fit an LLM agent's tool-output budget, which the old output silently overran.
 - `--annotations`: Add a crash annotations section — shutdown blockers, app notes, proto signature, and more. Opt-in because it costs extra output (2,665 → 4,834 bytes on the crash above). Silently ignored with `--full` or `--format json`, which already contain every annotation.
 - `--modules <MODE>`: Which modules to list: `none`, `stack` (modules in displayed frames), `full` (all loaded modules), `third-party` (Windows only: not signed by Mozilla or Microsoft) [default: stack]
 
@@ -368,24 +372,49 @@ socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --depth 3
 ### Deadlock and Multi-threading Issues
 
 ```bash
-# Show all thread stacks (useful for diagnosing deadlocks, race conditions)
-socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 2
+# Show all thread stacks (useful for diagnosing deadlocks, race conditions).
+# Threads whose displayed frames are identical are folded into one block, and
+# --all-threads lowers the default --depth from 10 to 5: 17,545 bytes with 28
+# distinct stacks for this 64-thread crash, where the two changes together
+# replaced 80,736 bytes of one-block-per-thread output.
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads
 
-# Output shows all 64 threads, with the crashing thread marked:
+# The same crash at --depth 2 is 3,933 bytes and 14 distinct stacks. Output,
+# with one group's member list and the last nine stacks elided:
+socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 2
+# threads: 64 total, 14 distinct stacks shown
+#
 # stack[thread 0:MainThread [CRASHING]]:
 #   #0 Abort(char const*) @ git:github.com/mozilla-firefox/firefox:xpcom/base/nsDebugImpl.cpp:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb:528
 #   #1 NS_DebugBreak(unsigned int, char const*, char const*, char const*, int) @ git:github.com/mozilla-firefox/firefox:xpcom/base/nsDebugImpl.cpp:9b794146973d3e99d273c58f9f6a5cc1dcfc09cb:511
 #
-# stack[thread 1:BrokerEvent]:
+# stack[2 threads: 1:BrokerEvent, 5:IPC I/O Parent]:
 #   #0 NtRemoveIoCompletion
 #   #1 GetQueuedCompletionStatus
 #
-# stack[thread 2:COM MTA]:
+# stack[42 threads: 2:COM MTA, 4:glean.dispatcher, 8:IPDL Background, 10:HTML5 Parser, ...]:
 #   #0 ZwWaitForAlertByThreadId
 #   #1 RtlWaitOnAddress
-#   ...
+#
+# stack[thread 3:Breakpad ExceptionHandler]:
+#   #0 ZwGetContextThread
+#   #1 0xfffffffffffffffe
+#
+# stack[3 threads: 6:Timer, 40:unknown, 58:unknown]:
+#   #0 NtWaitForMultipleObjects
+#   #1 WaitForMultipleObjectsEx
+#
+# ...and nine more distinct stacks
 
-# All threads with minimal depth for overview (5,062 bytes for 64 threads)
+# The count line says how many threads exist and how many distinct stacks are
+# shown, so folding is never silent. A group header names every member on one
+# unwrapped line, so no thread disappears. The crashing thread is never folded
+# into a group and never accepts members, so its [CRASHING] marker stays
+# unambiguous. Grouping compares the *displayed* frames, so raising --depth
+# splits groups that agree only on their first few frames: --depth 10 on this
+# crash reports 30 distinct stacks instead of 28, for 41,234 bytes.
+
+# All threads with minimal depth for overview (2,804 bytes for 64 threads)
 socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 1
 ```
 
@@ -528,9 +557,13 @@ socorro-cli search --signature "OOM | small" --facet version --days 30
 socorro-cli bugs --signature "OOM | small"
 
 # Deadlock investigation workflow
-# 1. Get crash with all threads
-socorro-cli crash b7c998c8-d033-4cc7-a1fe-ce4240260224 --all-threads --depth 10 > deadlock-stacks.txt
-# 2. Review all thread stacks to identify lock holders and waiters
+# 1. Get crash with all threads (41 threads, 20 distinct stacks, 12,333 bytes;
+#    --depth 10 would buy 2 more distinct stacks for 27,320 bytes, so start here
+#    and only raise --depth if a group's members turn out to diverge below it)
+socorro-cli crash b7c998c8-d033-4cc7-a1fe-ce4240260224 --all-threads > deadlock-stacks.txt
+# 2. Review all thread stacks to identify lock holders and waiters. Threads
+#    sharing a stack are folded into one block that names every member, so the
+#    idle pool threads collapse and the distinctive stacks stand out.
 
 # Shutdown hang investigation workflow
 # 1. Read the annotations to see which components blocked shutdown, and in which phase

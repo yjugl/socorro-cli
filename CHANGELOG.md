@@ -22,6 +22,18 @@ All notable changes to this project will be documented in this file.
   `type: hang | parent | uptime 2175s | 64 threads`. Markdown gains the
   equivalent bullets under `## Details`. This information changes how the rest
   of the report reads and costs 48 bytes (2,617 to 2,665) on the crash above.
+- **`--all-threads` groups threads that share a stack.** Threads whose
+  displayed frames are identical are folded into one block whose header names
+  every member (`stack[8 threads: 21:TaskController #0, 22:TaskController #1,
+  ...]`), and a count line above the first stack reports how many threads exist
+  against how many distinct stacks are shown (`threads: 64 total, 28 distinct
+  stacks shown`), so folding is never silent. Markdown gains the equivalent: a
+  total/distinct line under `## All Threads`, a `+ N identical` heading suffix,
+  and an `Identical stacks:` line. The crashing thread is never folded and never
+  accepts members, so its `[CRASHING]` marker stays unambiguous. Grouping
+  compares the displayed frames rather than the full ones, so `--depth` changes
+  the grouping: on `b98bbb81-3ff6-4825-991f-6a0b30260901` (64 threads) the
+  default reports 28 distinct stacks and `--depth 10` reports 30.
 
 ### Fixes
 
@@ -38,6 +50,20 @@ All notable changes to this project will be documented in this file.
 
 ### Behavior Changes
 
+- **`--all-threads` now defaults to `--depth 5` instead of 10.** With one stack
+  per thread the per-thread cost is multiplied by the thread count, and the
+  result overran the ~30–40 KB tool-output cap of the LLM agents this tool
+  exists to serve — so the tail of the thread list was silently invisible to
+  them. On `b98bbb81-3ff6-4825-991f-6a0b30260901` the lower depth and the
+  grouping above together took compact `--all-threads` from **80,736 bytes and
+  64 stack blocks to 17,545 bytes and 28**, and markdown from 80,361 to 18,114.
+  An explicit `--depth` always wins, so `--all-threads --depth 10` is still
+  available (41,234 bytes, 30 distinct stacks) and `--all-threads --depth 1` is
+  now 2,804 bytes rather than 5,062. Default `crash` output, without
+  `--all-threads`, is byte-identical at 2,665. Because the default is now
+  computed rather than declared, `crash --help` no longer prints
+  `[default: 10]` for `--depth`; both defaults are stated in the flag's help
+  text.
 - **`--modules third-party` on a non-Windows crash no longer fails when the
   output is JSON.** Combined with `--full` or `--format json` it previously
   exited 1 with `UnsupportedOption`; it now exits 0 and emits JSON. The OS
@@ -58,6 +84,13 @@ All notable changes to this project will be documented in this file.
   thing keeping protected fields out of JSON output.
 - Removed the dead struct-serializing `json::format_crash` (a `pub` item
   removed from the library crate).
+- `commands::crash::execute` now takes a `CrashParams` struct instead of eight
+  positional arguments, mirroring `search::execute(client, params, format)`;
+  `#[allow(clippy::too_many_arguments)]` is gone. `format` stays a separate
+  argument because `--format` is a global option rather than a `crash` flag.
+- Added `ThreadRef` and `ThreadSummary::identical_threads` to
+  `src/models/processed_crash.rs`, and derived `PartialEq, Eq` on `StackFrame`
+  so truncated frame lists can be compared.
 
 ## [0.6.0] - 2026-04-22
 

@@ -106,8 +106,16 @@ EXAMPLES:
     # Show more stack frames
     socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --depth 20
 
-    # Show all threads (useful for deadlock analysis)
+    # Show all threads, grouping threads that share a stack (deadlock analysis)
     socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads
+
+    # All threads at minimal depth, for a cheap overview of what every thread
+    # is doing (2,804 bytes for a 64-thread crash)
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 1
+
+    # All threads with the full default depth, splitting groups that agree only
+    # on their first few frames
+    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 10
 
     # Hide modules section
     socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --modules none
@@ -126,6 +134,25 @@ EXAMPLES:
 
     # Get full JSON data (the API response verbatim)
     socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --full
+
+ALL THREADS:
+    --all-threads shows every thread, not just the crashing one. Two things
+    keep that affordable.
+    Threads whose displayed frames are identical are folded into a single
+    block whose header names every member on one line, for example
+    'stack[5 threads: 11:StyleThread#1, 12:StyleThread#2, ...]'. A count line
+    above the first stack reports the totals, e.g.
+    'threads: 64 total, 28 distinct stacks shown', so folding is never silent.
+    The crashing thread is never folded into a group and never accepts members,
+    so its [CRASHING] marker is always unambiguous.
+    --all-threads also lowers the default --depth from 10 to 5, since the
+    per-thread cost is multiplied by the thread count. On the reference crash
+    above (64 threads) the two changes together take compact output from
+    80,736 bytes and 64 stack blocks to 17,545 bytes and 28.
+    Grouping compares the *displayed* frames, not the full ones, so --depth
+    changes the grouping: the same crash reports 28 distinct stacks at the
+    default depth 5 and 30 at --depth 10 (41,234 bytes). An explicit --depth
+    always wins over both defaults.
 
 ANNOTATIONS:
     --annotations adds a section of crash annotations to compact and markdown
@@ -184,7 +211,8 @@ OUTPUT FIELDS:
     product     - Product name and version (Firefox 120.0, Fenix 147.0.1, etc.)
     build       - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
     channel     - Release channel (release, beta, nightly, esr, aurora, default)
-    stack       - Stack trace of the crashing thread
+    threads     - Thread and distinct-stack counts (only with --all-threads; see ALL THREADS above)
+    stack       - Stack trace of the crashing thread, or of a group of threads sharing one
     modules     - Loaded modules with debug info (controlled by --modules)
     annotations - Extra crash annotations (only with --annotations; see ANNOTATIONS above)";
 
