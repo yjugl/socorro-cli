@@ -514,15 +514,15 @@ EXAMPLES:
         /// Crash ID (UUID) or full Socorro URL
         crash_id: String,
 
-        /// Number of stack frames to show per thread
-        #[arg(long, default_value = "10")]
-        depth: usize,
+        /// Number of stack frames to show per thread (default: 10, or 5 with --all-threads)
+        #[arg(long)]
+        depth: Option<usize>,
 
         /// Output complete crash data without omissions (forces JSON; skips API token for privacy, may lower rate limits)
         #[arg(long)]
         full: bool,
 
-        /// Show stacks from all threads, not just the crashing thread (useful for diagnosing deadlocks)
+        /// Show stacks from all threads, not just the crashing thread (useful for diagnosing deadlocks; lowers the default --depth to 5 to keep the output readable)
         #[arg(long)]
         all_threads: bool,
 
@@ -814,16 +814,15 @@ fn run(cli: Cli) -> Result<()> {
             annotations,
         } => {
             let client = SocorroClient::new("https://crash-stats.mozilla.org/api".to_string());
-            socorro_cli::commands::crash::execute(
-                &client,
-                &crash_id,
+            let params = socorro_cli::commands::crash::CrashParams {
+                crash_id,
                 depth,
                 full,
                 all_threads,
-                modules,
+                modules_mode: modules,
                 annotations,
-                cli.format,
-            )?;
+            };
+            socorro_cli::commands::crash::execute(&client, params, cli.format)?;
         }
         Commands::Search {
             signature,

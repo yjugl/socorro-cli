@@ -92,21 +92,67 @@ fn should_use_auth(full: bool, format: OutputFormat) -> bool {
     }
 }
 
-// The parameters mirror the `crash` subcommand's flags one-for-one; bundling
-// them into a params struct (as `search::execute` does) is a refactor of its
-// own and would not make any call site clearer today.
-#[allow(clippy::too_many_arguments)]
-pub fn execute(
-    client: &SocorroClient,
-    crash_id: &str,
-    depth: usize,
-    full: bool,
-    all_threads: bool,
-    modules_mode: ModulesMode,
-    annotations: bool,
-    format: OutputFormat,
-) -> Result<()> {
-    let crash_id = extract_crash_id(crash_id);
+/// Default number of stack frames per thread for a single-thread report.
+const DEFAULT_DEPTH: usize = 10;
+
+/// Default number of stack frames per thread under `--all-threads`.
+///
+/// Lower than `DEFAULT_DEPTH` because the cost is multiplied by the thread
+/// count, and this tool exists to feed LLM agents whose tool-output budget is
+/// roughly 30-40 KB. Measured on crash
+/// `b98bbb81-3ff6-4825-991f-6a0b30260901`, which has 64 threads:
+/// `crash <id> --all-threads` emitted 80,736 bytes at depth 10, so the tail of
+/// the thread list was silently cut off before the reader ever saw it. At depth
+/// 5 the same command is 34,320 bytes.
+const DEFAULT_ALL_THREADS_DEPTH: usize = 5;
+
+/// Resolves the stack depth to use from the optional `--depth` flag.
+///
+/// An explicit `--depth` always wins, including when it happens to equal the
+/// default it replaces; only its absence selects a default, and which default
+/// depends on `--all-threads`.
+///
+/// Kept as a pure function so the four cases can be enumerated in an offline
+/// test: `execute()` does network I/O and cannot be unit-tested. This is also
+/// why the decision is not expressed with clap's `default_value_if` -- there it
+/// would be untestable without going through `ArgMatches`.
+fn resolve_depth(depth: Option<usize>, all_threads: bool) -> usize {
+    depth.unwrap_or(if all_threads {
+        DEFAULT_ALL_THREADS_DEPTH
+    } else {
+        DEFAULT_DEPTH
+    })
+}
+
+/// The `crash` subcommand's flags, bundled so that adding one does not change
+/// `execute`'s signature. Mirrors `SearchParams`/`search::execute`, which keeps
+/// the output format out of the params struct because it is a global CLI option
+/// rather than a flag of the subcommand.
+pub struct CrashParams {
+    /// Crash ID (UUID) or full Socorro report URL.
+    pub crash_id: String,
+    /// `--depth` as given on the command line; `None` means "not specified",
+    /// which `resolve_depth` turns into a default that depends on
+    /// `all_threads`.
+    pub depth: Option<usize>,
+    pub full: bool,
+    pub all_threads: bool,
+    pub modules_mode: ModulesMode,
+    pub annotations: bool,
+}
+
+pub fn execute(client: &SocorroClient, params: CrashParams, format: OutputFormat) -> Result<()> {
+    let CrashParams {
+        crash_id,
+        depth,
+        full,
+        all_threads,
+        modules_mode,
+        annotations,
+    } = params;
+
+    let crash_id = extract_crash_id(&crash_id);
+    let depth = resolve_depth(depth, all_threads);
     let use_auth = should_use_auth(full, format);
 
     // JSON output is a raw passthrough of the API response: deserializing into
@@ -371,6 +417,43 @@ mod tests {
     fn test_summarized_output_still_authenticates_for_rate_limit() {
         assert!(should_use_auth(false, OutputFormat::Compact));
         assert!(should_use_auth(false, OutputFormat::Markdown));
+    }
+
+    #[test]
+    fn test_resolve_depth_all_four_cases() {
+        // (depth, all_threads) -> resolved
+        let cases = [
+            // An explicit --depth wins in both modes.
+            (Some(20), true, 20),
+            (Some(20), false, 20),
+            // No --depth: the default depends on --all-threads. The lower
+            // all-threads default is what keeps a 64-thread report inside an
+            // agent's tool-output budget; see DEFAULT_ALL_THREADS_DEPTH.
+            (None, true, 5),
+            (None, false, 10),
+        ];
+        for (depth, all_threads, expected) in cases {
+            assert_eq!(
+                resolve_depth(depth, all_threads),
+                expected,
+                "resolve_depth({:?}, all_threads={}) should be {}",
+                depth,
+                all_threads,
+                expected
+            );
+        }
+    }
+
+    /// An explicit `--depth` must be honoured even when it equals the default
+    /// it replaces, so the implementation cannot take a shortcut such as
+    /// treating the default value as "unspecified".
+    #[test]
+    fn test_resolve_depth_explicit_value_equal_to_a_default_still_wins() {
+        assert_eq!(resolve_depth(Some(10), true), 10);
+        assert_eq!(resolve_depth(Some(5), false), 5);
+        // And 0 is a real value, not an absence.
+        assert_eq!(resolve_depth(Some(0), true), 0);
+        assert_eq!(resolve_depth(Some(0), false), 0);
     }
 
     #[test]
