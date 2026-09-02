@@ -9,6 +9,11 @@ pub mod commands;
 pub mod models;
 pub mod output;
 
+/// Test-only HTTP server for exercising the crate's HTTP error paths offline.
+/// Never compiled into a shipping build.
+#[cfg(test)]
+pub mod test_server;
+
 pub use auth::{get_token, has_token};
 pub use client::SocorroClient;
 pub use models::*;
