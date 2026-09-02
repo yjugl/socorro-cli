@@ -108,16 +108,18 @@ fn fetch_stack(
     }
 }
 
-fn date_range(from: &str, to: &str) -> Vec<String> {
-    let start = NaiveDate::parse_from_str(from, "%Y-%m-%d").expect("invalid start date");
-    let end = NaiveDate::parse_from_str(to, "%Y-%m-%d").expect("invalid end date");
+fn date_range(from: &str, to: &str) -> Result<Vec<String>> {
+    let start = NaiveDate::parse_from_str(from, "%Y-%m-%d")
+        .map_err(|error| Error::ParseError(format!("invalid start date {from:?}: {error}")))?;
+    let end = NaiveDate::parse_from_str(to, "%Y-%m-%d")
+        .map_err(|error| Error::ParseError(format!("invalid end date {to:?}: {error}")))?;
     let mut dates = Vec::new();
     let mut current = start;
     while current <= end {
         dates.push(current.format("%Y-%m-%d").to_string());
         current += chrono::Duration::days(1);
     }
-    dates
+    Ok(dates)
 }
 
 fn aggregate(
@@ -233,7 +235,7 @@ pub fn execute(
         print!("{}", output);
     } else {
         // Aggregate mode
-        let dates = date_range(date_from, date_to);
+        let dates = date_range(date_from, date_to)?;
         let multi_date = dates.len() > 1;
         let mut responses = Vec::new();
 
@@ -489,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_date_range() {
-        let dates = date_range("2026-02-10", "2026-02-13");
+        let dates = date_range("2026-02-10", "2026-02-13").expect("valid date range");
         assert_eq!(
             dates,
             vec!["2026-02-10", "2026-02-11", "2026-02-12", "2026-02-13"]
@@ -498,8 +500,32 @@ mod tests {
 
     #[test]
     fn test_date_range_single_day() {
-        let dates = date_range("2026-02-10", "2026-02-10");
+        let dates = date_range("2026-02-10", "2026-02-10").expect("valid single-day range");
         assert_eq!(dates, vec!["2026-02-10"]);
+    }
+
+    #[test]
+    fn date_range_rejects_a_malformed_start_date() {
+        let err = date_range("not-a-date", "2026-02-10")
+            .expect_err("a malformed start date must be rejected");
+
+        let Error::ParseError(message) = err else {
+            panic!("expected Error::ParseError, got {err:?}");
+        };
+        assert!(message.contains("invalid start date"), "{message}");
+        assert!(message.contains("not-a-date"), "{message}");
+    }
+
+    #[test]
+    fn date_range_rejects_a_malformed_end_date() {
+        let err = date_range("2026-02-10", "not-a-date")
+            .expect_err("a malformed end date must be rejected");
+
+        let Error::ParseError(message) = err else {
+            panic!("expected Error::ParseError, got {err:?}");
+        };
+        assert!(message.contains("invalid end date"), "{message}");
+        assert!(message.contains("not-a-date"), "{message}");
     }
 
     #[test]

@@ -251,7 +251,8 @@ impl SocorroClient {
 
         query_params.push(("date", format!(">={}", params.date_from)));
         if let Some(ref to) = params.date_to {
-            let end = chrono::NaiveDate::parse_from_str(to, "%Y-%m-%d").unwrap()
+            let end = chrono::NaiveDate::parse_from_str(to, "%Y-%m-%d")
+                .map_err(|error| Error::ParseError(format!("invalid date_to {to:?}: {error}")))?
                 + chrono::Duration::days(1);
             query_params.push(("date", format!("<{}", end.format("%Y-%m-%d"))));
         }
@@ -373,8 +374,7 @@ mod tests {
         }
     }
 
-    /// The smallest `SearchParams` the client will accept. `date_to` is left
-    /// `None` because `search` parses it with `unwrap`.
+    /// The smallest `SearchParams` the client will accept.
     fn minimal_search_params() -> SearchParams {
         SearchParams {
             signature: None,
@@ -605,6 +605,46 @@ mod tests {
             .expect_err("202 is not a body this client can use");
 
         assert_unexpected_status(error, 202, "/SuperSearch/");
+    }
+
+    #[test]
+    fn search_rejects_a_malformed_date_to_without_panicking_or_sending_a_request() {
+        let server = TestServer::start();
+        let mut params = minimal_search_params();
+        params.date_to = Some("not-a-date".to_string());
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client_for(&server).search(params)
+        }));
+
+        let error = result
+            .expect("a malformed date_to must return an error rather than panic")
+            .expect_err("a malformed date_to must be rejected");
+        assert!(matches!(error, Error::ParseError(_)), "got {error:?}");
+        assert!(
+            server.requests().is_empty(),
+            "date_to must be validated before sending an HTTP request"
+        );
+    }
+
+    #[test]
+    fn search_converts_an_inclusive_date_to_to_the_next_day_exclusive_bound() {
+        let server = TestServer::start();
+        server.push_response(200, r#"{"total":0,"hits":[],"facets":{}}"#);
+        let mut params = minimal_search_params();
+        params.date_to = Some("2026-09-02".to_string());
+
+        client_for(&server)
+            .search(params)
+            .expect("a valid search response must deserialize");
+
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1, "expected exactly one request");
+        assert!(
+            requests[0].path.contains("date=%3C2026-09-03"),
+            "request must use the exclusive next-day upper bound: {}",
+            requests[0].path
+        );
     }
 
     #[test]

@@ -5,6 +5,13 @@
 use clap::{Parser, Subcommand};
 use socorro_cli::{ModulesMode, OutputFormat, Result, SocorroClient};
 
+fn parse_date(value: &str) -> std::result::Result<String, String> {
+    match chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        Ok(date) if date.format("%Y-%m-%d").to_string() == value => Ok(value.to_string()),
+        _ => Err(format!("invalid date '{value}': expected YYYY-MM-DD")),
+    }
+}
+
 const LONG_ABOUT: &str = "\
 Query Mozilla's Socorro crash reporting system (https://crash-stats.mozilla.org).
 
@@ -576,7 +583,7 @@ EXAMPLES:
     #[command(long_about = CRASH_PINGS_ABOUT)]
     CrashPings {
         /// Date to query (YYYY-MM-DD), defaults to yesterday (UTC)
-        #[arg(long, conflicts_with_all = ["days", "from", "to"])]
+        #[arg(long, value_parser = parse_date, conflicts_with_all = ["days", "from", "to"])]
         date: Option<String>,
 
         /// Query the last N days (ending at yesterday)
@@ -584,11 +591,11 @@ EXAMPLES:
         days: Option<u32>,
 
         /// Start of date range, inclusive (YYYY-MM-DD)
-        #[arg(long, conflicts_with_all = ["date", "days"])]
+        #[arg(long, value_parser = parse_date, conflicts_with_all = ["date", "days"])]
         from: Option<String>,
 
         /// End of date range, inclusive (YYYY-MM-DD), defaults to yesterday if only --from given
-        #[arg(long, conflicts_with_all = ["date", "days"], requires = "from")]
+        #[arg(long, value_parser = parse_date, conflicts_with_all = ["date", "days"], requires = "from")]
         to: Option<String>,
 
         /// Filter by release channel (release, beta, nightly)
@@ -692,7 +699,7 @@ EXAMPLES:
         process_type: Option<String>,
 
         /// Single date to search (YYYY-MM-DD)
-        #[arg(long, conflicts_with_all = ["days", "from", "to"])]
+        #[arg(long, value_parser = parse_date, conflicts_with_all = ["days", "from", "to"])]
         date: Option<String>,
 
         /// Search crashes from the last N days
@@ -700,11 +707,11 @@ EXAMPLES:
         days: Option<u32>,
 
         /// Start of date range, inclusive (YYYY-MM-DD)
-        #[arg(long, conflicts_with_all = ["date", "days"])]
+        #[arg(long, value_parser = parse_date, conflicts_with_all = ["date", "days"])]
         from: Option<String>,
 
         /// End of date range, inclusive (YYYY-MM-DD), defaults to today if only --from given
-        #[arg(long, conflicts_with_all = ["date", "days"], requires = "from")]
+        #[arg(long, value_parser = parse_date, conflicts_with_all = ["date", "days"], requires = "from")]
         to: Option<String>,
 
         /// Maximum number of individual crash results to return (default: 10, or 0 when --facet is used)
@@ -923,4 +930,66 @@ fn run(cli: Cli) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::error::ErrorKind;
+
+    #[test]
+    fn search_rejects_malformed_date_arguments() {
+        assert_malformed_dates("search");
+    }
+
+    #[test]
+    fn crash_pings_rejects_malformed_date_arguments() {
+        assert_malformed_dates("crash-pings");
+    }
+
+    #[test]
+    fn search_accepts_valid_leap_day_arguments() {
+        assert_valid_leap_day_dates("search");
+    }
+
+    #[test]
+    fn crash_pings_accepts_valid_leap_day_arguments() {
+        assert_valid_leap_day_dates("crash-pings");
+    }
+
+    fn assert_malformed_dates(command: &str) {
+        for flag in ["--date", "--from", "--to"] {
+            let mut args = vec!["socorro-cli", command];
+            if flag == "--to" {
+                args.extend(["--from", "2024-02-01"]);
+            }
+            args.extend([flag, "not-a-date"]);
+
+            let error = match Cli::try_parse_from(args) {
+                Ok(_) => panic!("malformed date should be rejected"),
+                Err(error) => error,
+            };
+            assert_eq!(error.kind(), ErrorKind::ValueValidation);
+            assert!(
+                error.to_string().contains("YYYY-MM-DD"),
+                "error for {command} {flag} did not explain the format: {error}"
+            );
+        }
+    }
+
+    fn assert_valid_leap_day_dates(command: &str) {
+        for args in [
+            vec!["socorro-cli", command, "--date", "2024-02-29"],
+            vec![
+                "socorro-cli",
+                command,
+                "--from",
+                "2024-02-29",
+                "--to",
+                "2024-02-29",
+            ],
+        ] {
+            Cli::try_parse_from(args).expect("valid leap day should be accepted");
+        }
+    }
 }
