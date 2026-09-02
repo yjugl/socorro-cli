@@ -313,6 +313,13 @@ Formatted output for documentation and chat interfaces.
 Note: `--signature` and `--bug-id` are mutually exclusive. At least one must be provided.
 
 ### Crash Pings Options
+
+For both `search` and `crash-pings`, every `--date`, `--from`, and `--to`
+value must be an exact, valid `YYYY-MM-DD` date. Malformed values produce a
+graceful command-line usage error before any query or cache access. Date ranges
+remain inclusive; `search --from` defaults its end to today, while
+`crash-pings --from` defaults its end to yesterday.
+
 - `--date <DATE>`: Date to query (YYYY-MM-DD) [default: yesterday UTC]
 - `--days <N>`: Query the last N days (ending at yesterday)
 - `--from <DATE>`: Start of date range, inclusive (YYYY-MM-DD)

@@ -270,7 +270,7 @@ Run tests with:
 cargo test
 ```
 
-The test suite (293 tests) covers:
+The test suite (301 tests: 297 library and 4 binary) covers:
 - **Crash ID extraction**: Bare IDs, full URLs, URLs with trailing slashes
 - **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode, module extraction from `json_dump.modules`, annotation field extraction, and the lenient scalar deserializers (`deserialize_optional_u64`/`deserialize_optional_bool` accepting numbers, numeric strings and bool-ish strings, and yielding `None` rather than erroring on junk)
 - **Annotations model**: `AsyncShutdownTimeout::parse()` — phase and condition extraction, `filename`/`lineNumber` handling, object vs. string vs. missing `state`, polymorphic `stack` field, zero-condition payloads, and the `Raw` fallback for malformed or unexpectedly-shaped input (including a JSON array, which serde would otherwise deserialize positionally)
@@ -303,7 +303,6 @@ Known gaps, deliberate:
 - **Network-level failures are still untested**: connection refused, timeouts, TLS errors. The harness answers requests; it cannot simulate the transport failing.
 - **`response.url()` after a redirect is untested.** The harness cannot set a `Location` header, so the "URL reqwest actually fetched" claim in `status_error()` is only exercised on the non-redirected path.
 - **`SocorroClient::new()` uses `reqwest::blocking::Client::new()`, which honours ambient proxy environment variables.** A developer with `http_proxy` set may see the `src/client.rs` HTTP tests fail for environmental reasons rather than code ones.
-- **Input validation is a separate, still-panicking concern.** `client::search()` unwraps `NaiveDate::parse_from_str` on `params.date_to`, and `crash_pings::date_range()` uses `.expect()` on both bounds, so a malformed date string still aborts. That is argument validation rather than an HTTP error path and was left alone.
 
 ## Future Improvements
 

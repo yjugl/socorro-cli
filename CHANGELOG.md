@@ -49,6 +49,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixes
 
+- **Malformed date arguments now fail gracefully.** Every `search` and
+  `crash-pings` `--date`, `--from`, and `--to` value is validated as an exact
+  `YYYY-MM-DD` calendar date by the command-line parser, producing a usage
+  error before any request or cache access. Internal malformed search end dates
+  and crash-pings range bounds now return `ParseError` instead of panicking.
+  Existing defaults and inclusive date-range semantics are unchanged.
+
 - **`--full` and `--format json` no longer drop most of the API response.**
   Both re-serialized the internal `ProcessedCrash` struct, which declared only
   16 of the 85 top-level keys the `/ProcessedCrash/` endpoint returns — so 69
