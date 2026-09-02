@@ -49,3 +49,81 @@ pub enum Error {
     #[error("{0}")]
     UnsupportedOption(String),
 }
+
+/// Returns a prefix of `text` that is at most `max` *bytes* long and always
+/// ends on a UTF-8 character boundary.
+///
+/// This exists for the `Error::ParseError` response preview, which quotes the
+/// first couple of hundred bytes of a body the client failed to deserialize.
+/// The naive form of that preview, `&text[..text.len().min(200)]`, panics
+/// whenever byte `200` lands inside a multi-byte character: 199 ASCII bytes
+/// followed by an em dash aborts with `byte index 200 is not a char boundary;
+/// it is inside '\u{2014}' (bytes 199..202)`. The body is arbitrary bytes off
+/// the network, so the naive slice turns a diagnostic into a crash at exactly
+/// the moment the diagnostic was wanted.
+///
+/// This never panics, for any input and any `max`. When the cap falls inside a
+/// character the prefix is shortened to the preceding boundary, so the result
+/// can be up to three bytes shorter than `max`.
+pub fn truncate_on_char_boundary(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    // `is_char_boundary(0)` is always true, so this terminates at or above 0.
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_returns_input_shorter_than_the_cap_whole() {
+        assert_eq!(truncate_on_char_boundary("short", 200), "short");
+    }
+
+    #[test]
+    fn truncate_returns_input_exactly_at_the_cap_whole() {
+        let text = "a".repeat(200);
+        let truncated = truncate_on_char_boundary(&text, 200);
+        assert_eq!(truncated.len(), 200);
+        assert_eq!(truncated, text);
+    }
+
+    #[test]
+    fn truncate_backs_up_when_the_cap_lands_mid_character() {
+        // The exact shape that panics with `&text[..200]`: 199 ASCII bytes
+        // then a three-byte em dash spanning bytes 199..202.
+        let text = "a".repeat(199) + "\u{2014}";
+        assert_eq!(text.len(), 202);
+        let truncated = truncate_on_char_boundary(&text, 200);
+        assert_eq!(truncated.len(), 199);
+        assert_eq!(truncated, "a".repeat(199));
+    }
+
+    #[test]
+    fn truncate_handles_an_all_multibyte_input() {
+        // Four-byte characters; a cap of 10 must fall back to 8.
+        let text = "\u{1f600}\u{1f600}\u{1f600}";
+        assert_eq!(text.len(), 12);
+        let truncated = truncate_on_char_boundary(text, 10);
+        assert_eq!(truncated.len(), 8);
+        assert_eq!(truncated, "\u{1f600}\u{1f600}");
+    }
+
+    #[test]
+    fn truncate_with_a_zero_cap_returns_empty() {
+        assert_eq!(truncate_on_char_boundary("\u{2014}abc", 0), "");
+        assert_eq!(truncate_on_char_boundary("abc", 0), "");
+    }
+
+    #[test]
+    fn truncate_handles_an_empty_input() {
+        assert_eq!(truncate_on_char_boundary("", 200), "");
+        assert_eq!(truncate_on_char_boundary("", 0), "");
+    }
+}

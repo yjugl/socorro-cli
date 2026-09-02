@@ -44,6 +44,10 @@ fn fetch_ping_data(
                 Error::ParseError(format!(
                     "{}: {}",
                     e,
+                    // Slicing a byte slice cannot panic on a character
+                    // boundary, so this preview needs no
+                    // `truncate_on_char_boundary`; `from_utf8_lossy` repairs
+                    // whatever sequence the cap happens to split.
                     String::from_utf8_lossy(&bytes[..bytes.len().min(200)])
                 ))
             })
@@ -74,8 +78,13 @@ fn fetch_stack(
     match response.status() {
         StatusCode::OK => {
             let text = response.text()?;
-            serde_json::from_str(&text)
-                .map_err(|e| Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)])))
+            serde_json::from_str(&text).map_err(|e| {
+                Error::ParseError(format!(
+                    "{}: {}",
+                    e,
+                    crate::truncate_on_char_boundary(&text, 200)
+                ))
+            })
         }
         StatusCode::NOT_FOUND => Err(Error::NotFound(format!(
             "Stack not found for crash ping {} on {}",
@@ -274,6 +283,7 @@ pub fn format_frame_location(frame: &CrashPingFrame) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_server::TestServer;
     use serde_json::json;
 
     fn make_test_response() -> CrashPingsResponse {
@@ -535,6 +545,53 @@ mod tests {
         assert_eq!(
             format_frame_location(&frame),
             "EnsureTimeStretcher @ AudioDecoderInputTrack.cpp:624"
+        );
+    }
+
+    /// A blocking client shaped like the one `execute` builds, but immune to
+    /// ambient proxy configuration: the test server is on loopback, and an
+    /// `http_proxy` in the environment would otherwise send the request
+    /// somewhere else entirely. `gzip(true)` mirrors production; the test
+    /// server sends no `Content-Encoding`, so plain bodies still decode.
+    fn test_client() -> reqwest::blocking::Client {
+        reqwest::blocking::Client::builder()
+            .no_proxy()
+            .gzip(true)
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("build blocking test client")
+    }
+
+    /// The `ParseError` preview must survive a body whose 200th byte lands
+    /// inside a multi-byte character. `fetch_stack` used to build it by
+    /// slicing the body to a flat 200-byte cap, which panics on exactly this
+    /// input -- aborting the process at the moment a diagnostic was wanted, on
+    /// a body that is arbitrary bytes off the network.
+    #[test]
+    fn fetch_stack_previews_a_body_split_mid_utf8_sequence_without_panicking() {
+        // 199 ASCII bytes then a 3-byte em dash.
+        let body = format!("{}\u{2014}", "a".repeat(199));
+        assert_eq!(body.len(), 202);
+        assert!(!body.is_char_boundary(200));
+
+        let server = TestServer::start();
+        server.push_response(200, body);
+
+        let err = fetch_stack(&test_client(), &server.base_url(), "2026-09-01", "abc")
+            .expect_err("a non-JSON body must not parse");
+
+        let Error::ParseError(message) = &err else {
+            panic!("expected Error::ParseError, got {err:?}");
+        };
+        // Truncated at the boundary *before* the em dash: byte 199 is a
+        // boundary, byte 200 is not, so the preview is the 199 ASCII bytes.
+        assert!(
+            message.contains(&"a".repeat(199)),
+            "preview lost the ASCII prefix: {message}"
+        );
+        assert!(
+            !message.contains('\u{2014}'),
+            "preview should stop before the split character: {message}"
         );
     }
 }

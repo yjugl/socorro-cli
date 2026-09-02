@@ -4,7 +4,7 @@
 
 use crate::models::bugs::BugsResponse;
 use crate::models::{ProcessedCrash, SearchParams, SearchResponse};
-use crate::{Error, Result, auth};
+use crate::{Error, Result, auth, truncate_on_char_boundary};
 use reqwest::StatusCode;
 use reqwest::blocking::Client;
 
@@ -76,6 +76,15 @@ fn exact_match_default(value: String) -> String {
     }
 }
 
+/// How many bytes of an unparseable response body to quote in
+/// [`Error::ParseError`].
+///
+/// Applied through [`truncate_on_char_boundary`] rather than by slicing: the
+/// body is arbitrary bytes off the network, so a cap that lands inside a
+/// multi-byte character would panic on the very path that exists to report a
+/// problem. See that function for the failing shape.
+const PREVIEW_BYTES: usize = 200;
+
 pub struct SocorroClient {
     base_url: String,
     client: Client,
@@ -123,8 +132,13 @@ impl SocorroClient {
 
     pub fn get_crash(&self, crash_id: &str, use_auth: bool) -> Result<ProcessedCrash> {
         let text = self.fetch_processed_crash_body(crash_id, use_auth)?;
-        serde_json::from_str(&text)
-            .map_err(|e| Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)])))
+        serde_json::from_str(&text).map_err(|e| {
+            Error::ParseError(format!(
+                "{}: {}",
+                e,
+                truncate_on_char_boundary(&text, PREVIEW_BYTES)
+            ))
+        })
     }
 
     /// Fetch `/ProcessedCrash/` for `crash_id` as an untyped `serde_json::Value`.
@@ -140,8 +154,13 @@ impl SocorroClient {
     /// fields (registers, `mac_boot_args`, …) from `json_dump` server-side.
     pub fn get_crash_raw(&self, crash_id: &str, use_auth: bool) -> Result<serde_json::Value> {
         let text = self.fetch_processed_crash_body(crash_id, use_auth)?;
-        serde_json::from_str(&text)
-            .map_err(|e| Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)])))
+        serde_json::from_str(&text).map_err(|e| {
+            Error::ParseError(format!(
+                "{}: {}",
+                e,
+                truncate_on_char_boundary(&text, PREVIEW_BYTES)
+            ))
+        })
     }
 
     pub fn get_bugs(&self, signatures: &[String]) -> Result<BugsResponse> {
@@ -162,7 +181,11 @@ impl SocorroClient {
             StatusCode::OK => {
                 let text = response.text()?;
                 serde_json::from_str(&text).map_err(|e| {
-                    Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)]))
+                    Error::ParseError(format!(
+                        "{}: {}",
+                        e,
+                        truncate_on_char_boundary(&text, PREVIEW_BYTES)
+                    ))
                 })
             }
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
@@ -188,7 +211,11 @@ impl SocorroClient {
             StatusCode::OK => {
                 let text = response.text()?;
                 serde_json::from_str(&text).map_err(|e| {
-                    Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)]))
+                    Error::ParseError(format!(
+                        "{}: {}",
+                        e,
+                        truncate_on_char_boundary(&text, PREVIEW_BYTES)
+                    ))
                 })
             }
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
@@ -281,7 +308,11 @@ impl SocorroClient {
             StatusCode::OK => {
                 let text = response.text()?;
                 serde_json::from_str(&text).map_err(|e| {
-                    Error::ParseError(format!("{}: {}", e, &text[..text.len().min(200)]))
+                    Error::ParseError(format!(
+                        "{}: {}",
+                        e,
+                        truncate_on_char_boundary(&text, PREVIEW_BYTES)
+                    ))
                 })
             }
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited),
@@ -293,9 +324,131 @@ impl SocorroClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_server::TestServer;
 
     fn test_client() -> SocorroClient {
         SocorroClient::new("https://crash-stats.mozilla.org/api".to_string())
+    }
+
+    /// A syntactically valid crash ID. Only its characters matter: the test
+    /// server answers whatever is asked for, so no live crash is involved and
+    /// this cannot rot when Socorro expires the report.
+    const CRASH_ID: &str = "b98bbb81-3ff6-4825-991f-6a0b30260901";
+
+    /// A client whose `base_url` is the loopback test server.
+    fn client_for(server: &TestServer) -> SocorroClient {
+        SocorroClient::new(server.base_url())
+    }
+
+    /// A body that is not JSON and whose byte 200 falls *inside* a character:
+    /// 199 ASCII bytes followed by a three-byte em dash occupying bytes
+    /// 199..202. This is the exact shape that makes a preview built by
+    /// slicing the body at a fixed byte cap panic.
+    fn body_split_mid_character() -> String {
+        let body = "a".repeat(199) + "\u{2014}";
+        assert_eq!(body.len(), 202);
+        assert!(!body.is_char_boundary(200));
+        body
+    }
+
+    /// Assert that `error` is a `ParseError` whose preview was cut back to the
+    /// character boundary before the cap: 199 `a`s, and no em dash.
+    fn assert_preview_truncated_at_the_boundary(error: Error) {
+        match error {
+            Error::ParseError(message) => {
+                assert!(
+                    message.ends_with(&"a".repeat(199)),
+                    "preview did not end at the character boundary: {message}"
+                );
+                assert!(
+                    !message.contains('\u{2014}'),
+                    "preview included the character the cap fell inside: {message}"
+                );
+            }
+            other => panic!("expected Error::ParseError, got {other:?}"),
+        }
+    }
+
+    /// The smallest `SearchParams` the client will accept. `date_to` is left
+    /// `None` because `search` parses it with `unwrap`.
+    fn minimal_search_params() -> SearchParams {
+        SearchParams {
+            signature: None,
+            proto_signature: None,
+            product: "Firefox".to_string(),
+            version: None,
+            platform: None,
+            cpu_arch: None,
+            release_channel: None,
+            platform_version: None,
+            process_type: None,
+            date_from: "2026-09-01".to_string(),
+            date_to: None,
+            limit: 10,
+            facets: vec![],
+            facets_size: None,
+            sort: "-date".to_string(),
+        }
+    }
+
+    #[test]
+    fn get_crash_previews_a_body_split_mid_character_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(200, body_split_mid_character());
+
+        let error = client_for(&server)
+            .get_crash(CRASH_ID, false)
+            .expect_err("a non-JSON body must not deserialize");
+
+        assert_preview_truncated_at_the_boundary(error);
+    }
+
+    #[test]
+    fn get_crash_raw_previews_a_body_split_mid_character_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(200, body_split_mid_character());
+
+        let error = client_for(&server)
+            .get_crash_raw(CRASH_ID, false)
+            .expect_err("a non-JSON body must not deserialize");
+
+        assert_preview_truncated_at_the_boundary(error);
+    }
+
+    #[test]
+    fn get_bugs_previews_a_body_split_mid_character_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(200, body_split_mid_character());
+
+        let error = client_for(&server)
+            .get_bugs(&["OOM | small".to_string()])
+            .expect_err("a non-JSON body must not deserialize");
+
+        assert_preview_truncated_at_the_boundary(error);
+    }
+
+    #[test]
+    fn get_signatures_by_bugs_previews_a_body_split_mid_character_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(200, body_split_mid_character());
+
+        let error = client_for(&server)
+            .get_signatures_by_bugs(&[1234567])
+            .expect_err("a non-JSON body must not deserialize");
+
+        assert_preview_truncated_at_the_boundary(error);
+    }
+
+    #[test]
+    fn search_previews_a_body_split_mid_character_without_panicking() {
+        let server = TestServer::start();
+        server.push_response(200, body_split_mid_character());
+
+        let error = client_for(&server)
+            .search(minimal_search_params())
+            .expect_err("a non-JSON body must not deserialize");
+
+        assert_preview_truncated_at_the_boundary(error);
     }
 
     #[test]
