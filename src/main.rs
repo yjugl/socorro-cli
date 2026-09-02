@@ -59,6 +59,15 @@ UPDATE CHECK:
     stderr into stdout (e.g. shell 2>&1 redirects), it may corrupt JSON output.
     In such cases, either redirect stderr separately or set MOZTOOLS_UPDATE_CHECK=0.
 
+CACHE:
+    'crash-pings' caches each day of downloaded ping data (~10 MB per day) in a
+    'socorro-cli' subdirectory of the OS cache directory, which is
+    ~/.cache/socorro-cli on Linux. Set SOCORRO_CACHE_DIR to relocate it.
+
+    That value is used verbatim as the cache directory: no 'socorro-cli'
+    component is appended, so SOCORRO_CACHE_DIR=/tmp/x writes
+    /tmp/x/crash-pings-<date>.json. Unset or blank falls back to the default.
+
 WORKFLOW:
     # 1. Find top crash signatures
     socorro-cli search --facet signature

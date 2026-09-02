@@ -111,6 +111,26 @@ after the command output. To disable:
 export MOZTOOLS_UPDATE_CHECK=0
 ```
 
+### Cache Location
+
+`crash-pings` caches each day of downloaded ping data on disk, so repeated
+queries for the same date are instant. By default it lives in a
+`socorro-cli` subdirectory of the OS-standard cache location, which is
+`~/.cache/socorro-cli/` on Linux.
+
+Set `SOCORRO_CACHE_DIR` to put it somewhere else — a larger disk, or a
+scratch directory you can throw away:
+
+```bash
+export SOCORRO_CACHE_DIR=/mnt/scratch/socorro-cache
+```
+
+The value is used **verbatim** as the cache directory: no `socorro-cli`
+component is appended, so the example above writes
+`/mnt/scratch/socorro-cache/crash-pings-2026-08-31.json` directly. An unset or
+blank value falls back to the default. One day of ping data is on the order of
+10 MB, so point it at a directory you do not mind filling.
+
 ## Usage
 
 ### Crash Command

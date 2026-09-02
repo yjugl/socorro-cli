@@ -34,6 +34,18 @@ All notable changes to this project will be documented in this file.
   compares the displayed frames rather than the full ones, so `--depth` changes
   the grouping: on `b98bbb81-3ff6-4825-991f-6a0b30260901` (64 threads) the
   default reports 28 distinct stacks and `--depth 10` reports 30.
+- **`SOCORRO_CACHE_DIR` relocates the on-disk cache.** The cache that makes
+  repeated `crash-pings` queries for the same day instant lived at a fixed
+  OS-standard path (`~/.cache/socorro-cli` on Linux) with no way to move it.
+  Setting `SOCORRO_CACHE_DIR` now overrides it. **The value is used verbatim
+  — no `socorro-cli` component is appended** — so
+  `SOCORRO_CACHE_DIR=/tmp/probe` writes
+  `/tmp/probe/crash-pings-2026-08-31.json`; an unset or blank value falls back
+  to the OS-standard location. This exists because the cache is consulted
+  before the request URL is built and its keys carry no base-URL component
+  (`crash-pings-<date>.json`), so a test pointing a command at a local server
+  would otherwise read production data on a hit, or write its fixture into the
+  user's real cache on a miss.
 
 ### Fixes
 
@@ -47,6 +59,36 @@ All notable changes to this project will be documented in this file.
   a Windows crash, 81 and 77 for two Linux ones), and key order is alphabetical
   rather than the server's, because `serde_json` is built without its
   `preserve_order` feature. No key is lost.
+- **A malformed response body no longer aborts the process.** Eight code paths
+  built the `Error::ParseError` response preview by slicing the body at a fixed
+  byte offset — `&text[..text.len().min(200)]` — which panics whenever that
+  offset lands inside a multi-byte character: 199 ASCII bytes followed by an em
+  dash aborts with `end byte index 200 is not a char boundary; it is inside '—'
+  (bytes 199..202 of string)`. The body is arbitrary bytes off the network, so
+  the naive slice turned a diagnostic into a crash at exactly the moment the
+  diagnostic was wanted. All eight — five in `src/client.rs` (processed crash,
+  raw crash, bugs, signatures-by-bugs, search), two in
+  `src/commands/correlations.rs` and one in `src/commands/crash_pings.rs` —
+  now go through one shared `truncate_on_char_boundary` helper that backs the
+  cap up to the preceding character boundary, so the error the user should have
+  seen is what they get.
+- **An unexpected HTTP status no longer aborts the process.** Each of the eight
+  HTTP paths ended its status `match` with
+  `Err(Error::Http(response.error_for_status().unwrap_err()))`, which assumes
+  the fallthrough status is a client or server error. `reqwest` returns
+  `Ok(self)` for everything else, so a `202`, a `204` or an unfollowed redirect
+  unwrapped an `Ok` and panicked. This was latent rather than actively firing:
+  `crash-stats.mozilla.org` was probed serving only 200/404/429/5xx, and the
+  `202` that `crash-pings.mozilla.org` genuinely returns for a day whose data
+  is not built yet is caught by its own explicit arm. Reaching it needed a
+  server or an intermediary to emit one unusual status. All eight now route
+  through one shared `status_error`, which keeps `Error::Http` — and reqwest's
+  richer status/url context — for a genuine 4xx or 5xx, and reports anything
+  else as the new `Error::UnexpectedStatus`, e.g.
+  `Unexpected HTTP status 202 from https://crash-pings.mozilla.org/...`. It
+  reads that classification *off* `error_for_status()` rather than re-deriving
+  it with `is_client_error() || is_server_error()`, so it cannot drift from
+  whatever reqwest treats as an error.
 
 ### Behavior Changes
 
@@ -91,6 +133,46 @@ All notable changes to this project will be documented in this file.
 - Added `ThreadRef` and `ThreadSummary::identical_threads` to
   `src/models/processed_crash.rs`, and derived `PartialEq, Eq` on `StackFrame`
   so truncated frame lists can be compared.
+- Added `src/test_server.rs`, a `#[cfg(test)]` HTTP server hand-rolled over
+  `std::net::TcpListener`, so the crate's HTTP error paths can be exercised
+  offline for the first time. It is deliberately not a mock-server crate:
+  **zero new dependencies** (nothing to review against MPL-2.0) and full
+  control of the raw status line, which is what makes it possible to serve a
+  `202` that reqwest's own helpers do not treat as an error. Each answered
+  request is recorded as a path plus the *names* of the headers it carried;
+  **header values are never captured**, because `auth::get_token()` consults
+  the real system keychain, so a developer's genuine API token can reach the
+  local test server, and a value that never enters the recorded struct cannot
+  be printed by an assertion failure, a `Debug` dump or a panic.
+- The test suite grew from 223 to 293 tests: `src/client.rs` 21 to 47,
+  `src/commands/correlations.rs` 2 to 12, `src/commands/crash_pings.rs` 12 to
+  22, `src/cache.rs` 4 to 8, plus 10 new in `src/lib.rs` and 10 self-tests for
+  the harness. The new ones cover per-module status mapping (404, 429, 202,
+  204, 301, 400, 500), the mid-character preview on every path that builds one,
+  and `Error::UnexpectedStatus`'s message.
+- The invariant that JSON crash output is fetched without the API token is now
+  tested through the HTTP plumbing, not only at the pure `should_use_auth()`
+  decision. Before this, no test in the crate asserted anything about what
+  headers went on the wire, so making `fetch_processed_crash_body` ignore its
+  `use_auth` argument was invisible; it now fails
+  `get_crash_sends_no_auth_token_when_use_auth_is_false` and its `get_crash_raw`
+  twin.
+- `cargo test` no longer writes to the user's real cache directory. It
+  previously dropped `test-cache-roundtrip.txt` and `test-cache-empty.txt`
+  there with best-effort cleanup; every test that touches the cache now
+  redirects it through `SOCORRO_CACHE_DIR` via a guard that unsets the variable
+  on drop, including on panic. `cache::resolve_cache_dir()` was split out of
+  `cache_dir()` — which resolves *and* creates — so a test can assert on the
+  default path without creating the real directory as a side effect.
+- The base URLs of `commands::correlations`' and `commands::crash_pings`'
+  fetch helpers are now parameters rather than hardcoded consts, so a test can
+  point them at the local server. `execute()` passes the existing `CDN_BASE`
+  and `BASE_URL`, so no public signature and no CLI behaviour changed.
+- Deduplicated the response-preview cap into one `PREVIEW_BYTES` constant, and
+  the unhandled-status fallthrough into one `status_error` function. Of the
+  three original copies of the latter, one re-derived reqwest's failure
+  classification by hand; the shared version reads it off `error_for_status()`
+  instead, so the two cannot drift.
 
 ## [0.6.0] - 2026-04-22
 

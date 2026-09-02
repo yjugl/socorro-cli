@@ -71,7 +71,7 @@ cargo clippy
 
 1. **Update documentation**: Update `--help` text (clap attributes in `src/main.rs`), `README.md`, and this `CLAUDE.md` file to reflect any new or changed commands, flags, or behaviors.
 2. **Format**: `cargo fmt`
-3. **Lint**: `cargo clippy` — fix any warnings.
+3. **Lint**: `cargo clippy` — fix any warnings. Plain `cargo clippy` is what this checklist requires, and it is clean. Note that `cargo clippy --all-targets` additionally reports one pre-existing warning, `items after a test module` in `src/output/compact.rs` (several `pub fn`s are declared below the `mod tests` block); it is known and out of scope, so do not treat it as something your change introduced.
 4. **Test**: `cargo test` — all tests must pass.
 5. **Verify packaging `include` is complete**: After any significant change (new source file outside `src/`, new top-level asset referenced at build time such as a `build.rs`/`include_str!`/`include_bytes!` target, new test/bench/example directory, or renamed top-level file), run `cargo package --allow-dirty` and confirm the verification step compiles successfully against the extracted tarball in `target/package/`. The `include` directive in `Cargo.toml` is a strict allowlist — anything not listed is silently dropped from the published crate, and missing files will only surface as a build failure on the first downstream user. Add new required paths to `include` before publishing.
 
@@ -92,7 +92,11 @@ followed by a blank line before any code. Do not omit this header from any new f
 ### Module Structure
 
 - **src/main.rs**: CLI entry point using `clap` for argument parsing
-- **src/lib.rs**: Library re-exports and error types
+- **src/lib.rs**: Library re-exports, error types, and the two helpers every HTTP path shares
+  - `truncate_on_char_boundary(text, max)`: byte-capped prefix of a string that always ends on a UTF-8 character boundary; used for the `Error::ParseError` response preview
+  - `status_error(response)`: turns a response whose status no caller arm recognised into an `Error`, without assuming it is a failure
+  - `PREVIEW_BYTES`: the single response-preview cap (200) shared by every fetch
+  - Declares `mod test_server` under `#[cfg(test)]`
 - **src/auth.rs**: Keychain operations for secure token storage
   - `get_token()`: Retrieves token from keychain, falls back to file at `SOCORRO_API_TOKEN_PATH`
   - `store_token()`: Stores token in system keychain
@@ -103,14 +107,17 @@ followed by a blank line before any code. Do not omit this header from any new f
   - `get_bugs()`: Queries Bugs API for bug associations by signature
   - `get_signatures_by_bugs()`: Queries SignaturesByBugs API for signatures by bug ID
   - Automatically retrieves auth token from keychain via `get_auth_header()`
+  - `SocorroClient::new()` takes the API base URL, which is what lets the HTTP-level tests point a real client at `test_server`'s loopback socket
+  - Every fetch matches the statuses it handles (200, 404, 429) and falls through to `status_error()`; every parse failure previews the body through `truncate_on_char_boundary()`
 - **src/commands/**: Command implementations
   - **auth.rs**: Handles `auth login/logout/status` subcommands
   - **crash.rs**: Handles crash fetching and output formatting. Takes a `CrashParams` struct (`crash_id`, `depth: Option<usize>`, `full`, `all_threads`, `modules_mode`, `annotations`) rather than positional arguments, mirroring `search::execute(client, params, format)`; `format` stays a separate argument because `--format` is a global CLI option, not a `crash` flag. Also home to `resolve_depth()` (with `DEFAULT_DEPTH = 10` and `DEFAULT_ALL_THREADS_DEPTH = 5`), to `should_use_auth()` — the pure function deciding whether the API token is sent — and to the raw-JSON passthrough path
   - **search.rs**: Handles crash search and aggregation
   - **bugs.rs**: Handles `bugs` command, dispatches to `get_bugs()` or `get_signatures_by_bugs()` based on flags
-  - **correlations.rs**: Fetches correlation data from CDN (not Socorro API), computes signature hash, handles CDN HTTP requests
-  - **crash_pings.rs**: Fetches crash ping data from crash-pings.mozilla.org, client-side filtering/aggregation, stack trace fetching
-- **src/cache.rs**: Generic file cache module using OS cache directory (`dirs::cache_dir()`)
+  - **correlations.rs**: Fetches correlation data from CDN (not Socorro API), computes signature hash, handles CDN HTTP requests. `fetch_totals()` and `fetch_signature_correlations()` take the CDN base URL as a parameter (`execute()` passes the `CDN_BASE` const) so tests can point them at a local server
+  - **crash_pings.rs**: Fetches crash ping data from crash-pings.mozilla.org, client-side filtering/aggregation, stack trace fetching. `fetch_ping_data()` and `fetch_stack()` take the base URL as a parameter (`execute()` passes the `BASE_URL` const). `fetch_ping_data()` handles 202 explicitly — that is the status the server serves for a day whose data is not built yet — and 404; `fetch_stack()` handles 404
+- **src/cache.rs**: Generic file cache module using OS cache directory (`dirs::cache_dir()`), overridable with `SOCORRO_CACHE_DIR`
+  - `resolve_cache_dir()`: Resolves the path without touching the filesystem — split out of `cache_dir()` so a test can assert on the default path without `create_dir_all`-ing the user's real cache
   - `cache_dir()`: Returns/creates the cache directory
   - `read_cached()`: Read cached data by key
   - `write_cache()`: Write data to cache by key
@@ -126,6 +133,8 @@ followed by a blank line before any code. Do not omit this header from any new f
   - **compact.rs**: Token-optimized plain text (default, LLM-friendly)
   - **json.rs**: Full JSON output
   - **markdown.rs**: Human-readable markdown
+- **src/test_server.rs**: Test-only HTTP server, declared `#[cfg(test)]` in `src/lib.rs` so it never compiles into a shipping build. Hand-rolled over `std::net::TcpListener` in a background thread rather than pulling in a mock-server crate: **zero new dependencies** (nothing to review against MPL-2.0) and full control of the raw status line, which is what makes it possible to serve a `202` that reqwest's own helpers do not treat as an error. API: `TestServer::start()` (binds `127.0.0.1:0`), `push_response(status, body)`, `base_url()`, and `requests() -> Vec<RecordedRequest>`, where `RecordedRequest` carries the request path plus lowercased `header_names` and a case-insensitive `has_header()`. It is ~21 KB that is packaged (the `include` allowlist covers `/src/**/*.rs`) but never built downstream; that is accepted.
+  - **Header *values* are deliberately never recorded.** `auth::get_token()` reads the real system keychain first, so a developer's genuine API token can reach the local test server. If the value never enters the recorded struct, then no assertion failure, `Debug` output, or panic can print it. Do not "improve" this by capturing values — the tests only ever need to know *whether* `Auth-Token` was sent.
 
 ### Data Flow
 
@@ -205,6 +214,15 @@ Both count lines and the compact `type:` line are pluralized — 1 is singular, 
 
 This invariant is now load-bearing rather than incidental: since JSON output is a raw passthrough, skipping the token is the *only* thing keeping protected fields out of it. The decision is isolated in the pure function `should_use_auth(full: bool, format: OutputFormat) -> bool` in `src/commands/crash.rs`, and a test exercises its full input matrix. Any change to that function or to `get_crash`'s `use_auth` argument is a security-relevant change.
 
+**Unhandled Statuses and Response Previews**: Every HTTP path in the crate matches the statuses it knows how to handle and needs a fallthrough arm for the rest. Both halves of that arm used to be written inline at each of the eight call sites, and both could panic. They differed sharply in reachability, which is worth keeping straight: the preview slice was reachable in ordinary use — any non-JSON body with a multi-byte character near byte 200 — and reverting the fix panics once per call site, at all eight. The status fallthrough was latent, needing a server or proxy to emit a status that is neither 4xx nor 5xx; probed 2026-09-02, crash-stats serves 200/404/429/5xx and crash-pings' 202 is caught by its own explicit arm.
+
+- The fallthrough was `Err(Error::Http(response.error_for_status().unwrap_err()))`, which assumes the status is a client or server error. `reqwest` returns `Ok(self)` for anything else, so a `202`, a `204`, or an unfollowed `3xx` unwrapped an `Ok` and aborted the process. `crate::status_error()` replaces all eight. It reads the classification *off* `error_for_status()` rather than re-deriving it with `is_client_error() || is_server_error()`, which is the tempting hand-written form and the one an earlier per-module fix in `correlations.rs` actually used: hand-derived, it would silently drift if reqwest ever changed what it treats as an error. The `Err` branch is exactly the 4xx/5xx case and keeps `Error::Http`, which carries reqwest's own status/url context; the `Ok` branch is exactly the set that needs `Error::UnexpectedStatus`. There is no panicking path left by construction rather than by argument. The reported URL comes from `response.url()`, i.e. what reqwest actually fetched, so it includes the query string a caller that built its request with `.query(...)` never had in a format string.
+- The `ParseError` preview was `&text[..text.len().min(200)]`, which panics whenever byte 200 lands inside a multi-byte character — 199 ASCII bytes followed by an em dash aborts with `end byte index 200 is not a char boundary; it is inside '—' (bytes 199..202 of string)`. The body is arbitrary bytes off the network, so this turned a diagnostic into a crash at exactly the moment the diagnostic was wanted. `crate::truncate_on_char_boundary()` replaces all eight string-slicing sites. The one remaining raw-offset slice, in `crash_pings::fetch_ping_data()`, is on a `&[u8]` and is safe: byte slices have no character boundaries, and `from_utf8_lossy` repairs whatever sequence the cap splits.
+
+**Cache Location and `SOCORRO_CACHE_DIR`**: The cache (`crash-pings-<date>.json` files, which make repeated `crash-pings` queries for the same day instant) lives in `dirs::cache_dir()?.join("socorro-cli")` — `~/.cache/socorro-cli` on Linux — unless `SOCORRO_CACHE_DIR` is set. **That variable's value is used verbatim: no `socorro-cli` component is appended.** So `SOCORRO_CACHE_DIR=/tmp/probe` writes `/tmp/probe/crash-pings-2026-08-31.json` directly. An unset or all-whitespace value falls back to the default. This is a footgun worth remembering — pointing it at a directory holding other things puts cache files in among them.
+
+It exists for test isolation, and the need is specific rather than theoretical: cache keys carry **no base-URL component**, and `crash_pings::fetch_ping_data()` consults the cache *before* it builds the request URL. A test pointing the command at a local server would therefore either get a cache hit and silently assert against production data, or on a miss write its fixture into the user's real cache under a key the real CLI would later read as genuine. Every test that touches the cache redirects it through a guard that unsets the variable on drop, including when the test panics.
+
 **Facet-aware `--limit` default**: When `--facet` is used, `--limit` defaults to 0 (only aggregations shown). Without `--facet`, it defaults to 10. Users can override with `--limit N` to show individual crash rows alongside aggregations. `--facets-size` controls how many buckets each facet returns (e.g., top N signatures).
 
 **Version Checking**: On startup, `moz-cli-version-check` asynchronously checks for newer releases on crates.io. If a newer version is found, a warning is printed to stderr after the command completes. Environments that merge stderr into stdout (e.g. shell `2>&1` redirects) should either redirect stderr separately or set `MOZTOOLS_UPDATE_CHECK=0` to avoid corrupting JSON output.
@@ -214,9 +232,11 @@ This invariant is now load-bearing rather than incidental: since JSON output is 
 - `Json` — wraps `serde_json::Error` for deserialization failures
 - `NotFound` — 404 responses, with context (crash ID or date)
 - `RateLimited` — 429 responses, suggests using an API token
-- `ParseError` — parse failures with response preview (first 200 chars)
+- `ParseError` — parse failures with a response preview capped at `PREVIEW_BYTES` (200) and truncated on a UTF-8 character boundary
 - `InvalidCrashId` — crash ID contains invalid characters (injection protection)
 - `Keyring` — keychain/credential storage errors
+- `UnsupportedOption` — a flag that is meaningless for the crash at hand (e.g. `--modules third-party` on a non-Windows crash)
+- `UnexpectedStatus { status, url }` — a status no caller arm recognised that is *not* a 4xx or 5xx: a `202`, a `204`, an unfollowed redirect. Renders as `Unexpected HTTP status 202 from <url>`. See "Unhandled Statuses and Response Previews" above for why this cannot share a representation with `Http`
 
 ### Field Naming Differences: `search` vs `crash-pings`
 
@@ -247,7 +267,7 @@ Run tests with:
 cargo test
 ```
 
-The test suite (223 tests) covers:
+The test suite (293 tests) covers:
 - **Crash ID extraction**: Bare IDs, full URLs, URLs with trailing slashes
 - **ProcessedCrash model**: JSON deserialization, `to_summary()` conversion, crashing thread identification from multiple sources, depth limiting, all-threads mode, module extraction from `json_dump.modules`, annotation field extraction, and the lenient scalar deserializers (`deserialize_optional_u64`/`deserialize_optional_bool` accepting numbers, numeric strings and bool-ish strings, and yielding `None` rather than erroring on junk)
 - **Annotations model**: `AsyncShutdownTimeout::parse()` — phase and condition extraction, `filename`/`lineNumber` handling, object vs. string vs. missing `state`, polymorphic `stack` field, zero-condition payloads, and the `Raw` fallback for malformed or unexpectedly-shaped input (including a JSON array, which serde would otherwise deserialize positionally)
@@ -256,7 +276,7 @@ The test suite (223 tests) covers:
 - **Correlations models**: Deserialization, `to_summary()` percentage calculations, `format_item_map()` for item display
 - **Crash pings models**: IndexedStrings/NullableIndexedStrings deserialization, accessor methods, filter matching (channel, OS, process, version, signature exact/contains, arch, combined), facet value resolution, stack response deserialization
 - **Crash pings command**: Aggregation by signature/OS, filtering, limit, percentage calculations, frame formatting, multi-response aggregation, date range generation
-- **Cache module**: Cache directory creation, read/write roundtrip, empty cache handling
+- **Cache module**: Cache directory creation, read/write roundtrip, empty cache handling, and the `SOCORRO_CACHE_DIR` override — that a set value redirects the cache, that an unset or all-whitespace value resolves to the default, and that the redirect guard unsets the variable even when a test panics. Every cache-touching test redirects to a temp dir, so `cargo test` writes nothing to the user's real cache
 - **Thread stack grouping in `to_summary()`**: identical stacks folded under `--all-threads`, the crashing thread never folded and never accepting members, groups ordered by lowest member index, comparison against the *truncated* frame list (so the same threads group at one `--depth` and split at a larger one), and a no-thread-lost accounting check that every thread appears exactly once as a representative or a member
 - **Depth resolution**: `resolve_depth()`'s four cases (explicit or default × with or without `--all-threads`), plus the case where an explicit `--depth` equal to the default it replaces still wins
 - **Output formatters**: Compact and Markdown formatters for crash (including `--modules` none/stack/full/third-party modes and the always-on `type:` line), search, bugs, correlations, and crash pings output
@@ -267,8 +287,20 @@ The test suite (223 tests) covers:
 - **Client validation**: Crash ID format validation (rejects invalid characters, potential injection attempts)
 - **Auth token file**: Reading from `SOCORRO_API_TOKEN_PATH`, whitespace handling, missing file handling
 - **JSON auth invariant**: The full input matrix of `should_use_auth(full, format)`, asserting the token is skipped for `--full` and `--format json` and sent for compact/markdown. This guards the security invariant above, which the raw JSON passthrough makes load-bearing
+- **JSON auth invariant, at the wire**: `get_crash()` and `get_crash_raw()` send no `auth-token` header when `use_auth` is false, and do send one when it is true — asserted against `test_server`'s recorded header *names*. This closes a real gap: before it existed, nothing in the crate asserted anything about the headers it put on the wire, so making `fetch_processed_crash_body()` ignore its `use_auth` argument was invisible to the whole suite
+- **HTTP status mapping, per module** (all offline, through `src/test_server.rs`):
+  - `src/client.rs`: 404 → `NotFound` and 429 → `RateLimited` on the paths that map them; 500 → `Http` and 400 → `Http`; 202 → `UnexpectedStatus` on all five fetch paths and 301 → `UnexpectedStatus` on `get_crash()`; a 200 body returned verbatim by `get_crash_raw()`
+  - `src/commands/correlations.rs`: a valid payload parsed from both `all.json.gz` and the hashed per-signature object; an unhandled success status → `UnexpectedStatus`; 500 → `Http`; 404 → `NotFound` for a signature and → `Http` through the fallthrough for the totals, which has no 404 arm
+  - `src/commands/crash_pings.rs`: `fetch_ping_data()`'s explicit 202 → explanatory `ParseError` and 404 → `NotFound`, plus 204 → `UnexpectedStatus` and 500 → `Http`; a successful response parsed *and* written to the (redirected) cache; `fetch_stack()`'s 404 → `NotFound`, 202 → `UnexpectedStatus`, 500 → `Http`, and the documented request path
+- **Response previews**: `truncate_on_char_boundary()` in isolation (input under, exactly at, and split by the cap; an all-multibyte input; a zero cap; an empty input), and a body whose byte 200 falls inside an em dash driven through every path that builds a preview — five in `src/client.rs`, two in `correlations.rs`, one in `crash_pings.rs`. Reverting the helper to the raw slice panics at each of those sites, and each has its own failing test
+- **`status_error()` and `Error::UnexpectedStatus`**: that a genuine 4xx and a genuine 5xx keep `Error::Http`, that a non-error status yields `UnexpectedStatus` naming the URL reqwest actually fetched, and that the variant's `Display` reads `Unexpected HTTP status 202 from <url>`
+- **The test harness itself**: `src/test_server.rs` has its own tests for serving a queued status and body, serving several in order, serving a `202`, serving a body that splits a UTF-8 sequence, recording paths and header names, reporting an absent header as absent, **never recording a header value**, answering from an empty queue with a loud 500, and stopping to listen when dropped
 
-Note: HTTP-level tests (404, 429, network errors) would require mocking the reqwest client and are not currently implemented.
+Known gaps, deliberate:
+- **Network-level failures are still untested**: connection refused, timeouts, TLS errors. The harness answers requests; it cannot simulate the transport failing.
+- **`response.url()` after a redirect is untested.** The harness cannot set a `Location` header, so the "URL reqwest actually fetched" claim in `status_error()` is only exercised on the non-redirected path.
+- **`SocorroClient::new()` uses `reqwest::blocking::Client::new()`, which honours ambient proxy environment variables.** A developer with `http_proxy` set may see the `src/client.rs` HTTP tests fail for environmental reasons rather than code ones.
+- **Input validation is a separate, still-panicking concern.** `client::search()` unwraps `NaiveDate::parse_from_str` on `params.date_to`, and `crash_pings::date_range()` uses `.expect()` on both bounds, so a malformed date string still aborts. That is argument validation rather than an HTTP error path and was left alone.
 
 ## Future Improvements
 
@@ -278,7 +310,7 @@ Features inspired by [crashstats-tools](https://github.com/mozilla-services/cras
 
 2. **`--modules-in-stack` filter**: Find crashes where a specific module appears in the stack. Supports wildcards (e.g., `--modules-in-stack='^libgallium_dri.so'`).
 
-3. **`--columns` selection**: Specify which fields to return in search results, reducing token output (e.g., `--columns uuid,signature,build_id`).
+3. **`--columns` selection**: Specify which fields to return in search results, reducing token output (e.g., `--columns uuid,signature,build_id`). **Measured 2026-09-02 and probably not worth building:** `search --signature "OOM | small" --limit 10` emits only ~1.6 KB in total, so trimming columns saves a few hundred bytes. The nine columns are currently hardcoded in `client.rs`'s `search()`. Note the byte count drifts with live crash volume (it measured between 1,601 and 1,644 over one afternoon), so re-measure rather than trusting a fixed figure.
 
 4. **Histogram aggregations**: Get crash counts per day broken down by a field (`--histogram-date=product`). Useful for trend analysis.
 
