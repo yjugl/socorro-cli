@@ -11,6 +11,11 @@ use crate::models::{
 };
 use std::collections::HashSet;
 
+/// `"s"` unless `count` is exactly 1, for pluralizing a noun inline.
+fn plural_s(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
 fn format_function(frame: &StackFrame) -> String {
     if let Some(func) = &frame.function {
         func.clone()
@@ -61,6 +66,14 @@ pub fn format_bugs(summary: &BugsSummary) -> String {
 /// includes the always-on crash-type annotations), the stack trace(s) and the
 /// module table. The bulkier annotations live in [`format_annotations`], which
 /// the crash command appends after this on request.
+///
+/// Under `--all-threads` the `## All Threads` section opens with a
+/// `N threads total, M distinct stacks shown.` line — both nouns agreeing in
+/// number with the count in front of them — because `to_summary()`
+/// folds threads with identical truncated stacks together. A folded entry's
+/// heading gains a `+ N identical` suffix and is followed by an
+/// `Identical stacks:` line naming the folded threads, so every thread of the
+/// crash is still accounted for by index.
 pub fn format_crash(summary: &CrashSummary, modules_mode: ModulesMode) -> String {
     let mut output = String::new();
 
@@ -139,6 +152,25 @@ pub fn format_crash(summary: &CrashSummary, modules_mode: ModulesMode) -> String
 
     if !summary.all_threads.is_empty() {
         output.push_str("## All Threads\n\n");
+        // `to_summary()` folds threads whose truncated stacks are identical into
+        // a single entry, so this section lists fewer stacks than the crash has
+        // threads. Both counts are derived from the grouping itself rather than
+        // from the `thread_count` annotation, which is unrelated and may be
+        // absent. The line is unconditional so the format stays stable even
+        // when nothing was folded and the two numbers agree.
+        let distinct_stacks = summary.all_threads.len();
+        let total_threads: usize = summary
+            .all_threads
+            .iter()
+            .map(|thread| 1 + thread.identical_threads.len())
+            .sum();
+        output.push_str(&format!(
+            "{} thread{} total, {} distinct stack{} shown.\n\n",
+            total_threads,
+            plural_s(total_threads),
+            distinct_stacks,
+            plural_s(distinct_stacks)
+        ));
         for thread in &summary.all_threads {
             let thread_name = thread.thread_name.as_deref().unwrap_or("unknown");
             let crash_marker = if thread.is_crashing {
@@ -146,10 +178,35 @@ pub fn format_crash(summary: &CrashSummary, modules_mode: ModulesMode) -> String
             } else {
                 ""
             };
-            output.push_str(&format!(
-                "### Thread {} ({}){}\n\n",
-                thread.thread_index, thread_name, crash_marker
-            ));
+            if thread.identical_threads.is_empty() {
+                output.push_str(&format!(
+                    "### Thread {} ({}){}\n\n",
+                    thread.thread_index, thread_name, crash_marker
+                ));
+            } else {
+                // The heading stays short because it feeds a table of contents;
+                // the folded threads are named on their own line below it.
+                output.push_str(&format!(
+                    "### Thread {} ({}){} + {} identical\n\n",
+                    thread.thread_index,
+                    thread_name,
+                    crash_marker,
+                    thread.identical_threads.len()
+                ));
+                let members = thread
+                    .identical_threads
+                    .iter()
+                    .map(|member| {
+                        format!(
+                            "{} ({})",
+                            member.thread_index,
+                            member.thread_name.as_deref().unwrap_or("unknown")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                output.push_str(&format!("Identical stacks: {}\n\n", members));
+            }
             output.push_str("```\n");
 
             for frame in &thread.frames {
@@ -583,7 +640,7 @@ pub fn format_correlations(summary: &CorrelationsSummary) -> String {
 mod tests {
     use super::*;
     use crate::models::{
-        CrashHit, CrashSummary, FacetBucket, ModuleInfo, ModulesMode, ThreadSummary,
+        CrashHit, CrashSummary, FacetBucket, ModuleInfo, ModulesMode, ThreadRef, ThreadSummary,
     };
     use std::collections::HashMap;
 
@@ -751,6 +808,207 @@ mod tests {
         assert!(output.contains("## All Threads"));
         assert!(output.contains("### Thread 0 (MainThread)"));
         assert!(output.contains("### Thread 1 (GraphRunner) **[CRASHING]**"));
+    }
+
+    /// A `ThreadSummary` folding `members` (index, optional name) into itself.
+    fn grouped_thread(
+        index: usize,
+        name: Option<&str>,
+        members: &[(usize, Option<&str>)],
+    ) -> ThreadSummary {
+        ThreadSummary {
+            thread_index: index,
+            thread_name: name.map(|n| n.to_string()),
+            frames: vec![],
+            is_crashing: false,
+            identical_threads: members
+                .iter()
+                .map(|(i, n)| ThreadRef {
+                    thread_index: *i,
+                    thread_name: n.map(|n| n.to_string()),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn test_format_crash_markdown_all_threads_total_distinct_line() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![
+            ThreadSummary {
+                thread_index: 0,
+                thread_name: Some("GeckoMain".to_string()),
+                frames: vec![],
+                is_crashing: true,
+                ..Default::default()
+            },
+            grouped_thread(
+                1,
+                Some("TaskController #0"),
+                &[
+                    (2, Some("TaskController #1")),
+                    (3, Some("TaskController #2")),
+                    (4, Some("TaskController #3")),
+                ],
+            ),
+            grouped_thread(5, Some("IPC I/O Parent"), &[(6, Some("Timer"))]),
+        ];
+        let output = format_crash(&summary, ModulesMode::None);
+
+        // 1 + 4 + 2 threads across 3 entries, and the line sits directly under
+        // the heading, separated by one blank line.
+        assert!(
+            output.contains(
+                "## All Threads\n\n7 threads total, 3 distinct stacks shown.\n\n### Thread 0"
+            ),
+            "{}",
+            output
+        );
+    }
+
+    /// A single ungrouped thread: both counts are 1, so both nouns are
+    /// singular.
+    #[test]
+    fn test_format_crash_markdown_all_threads_count_line_all_singular() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![ThreadSummary {
+            thread_index: 0,
+            thread_name: Some("GeckoMain".to_string()),
+            frames: vec![],
+            is_crashing: true,
+            ..Default::default()
+        }];
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert!(
+            output.contains("## All Threads\n\n1 thread total, 1 distinct stack shown.\n\n"),
+            "{}",
+            output
+        );
+    }
+
+    /// Two threads folded into one entry: `thread` is plural off the total
+    /// while `stack` is singular off the distinct count.
+    #[test]
+    fn test_format_crash_markdown_all_threads_count_line_mixed_number() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![grouped_thread(
+            0,
+            Some("TaskController #0"),
+            &[(1, Some("TaskController #1"))],
+        )];
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert!(
+            output.contains("## All Threads\n\n2 threads total, 1 distinct stack shown.\n\n"),
+            "{}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_format_crash_markdown_all_threads_ungrouped_heading_unchanged() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![
+            ThreadSummary {
+                thread_index: 0,
+                thread_name: Some("GeckoMain".to_string()),
+                frames: vec![],
+                is_crashing: true,
+                ..Default::default()
+            },
+            ThreadSummary {
+                thread_index: 1,
+                thread_name: Some("Compositor".to_string()),
+                frames: vec![],
+                is_crashing: false,
+                ..Default::default()
+            },
+        ];
+        let output = format_crash(&summary, ModulesMode::None);
+
+        // Nothing folded: the counts agree but the line is still emitted, and
+        // the headings keep the form they had before grouping existed.
+        assert!(
+            output.contains("2 threads total, 2 distinct stacks shown."),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("### Thread 0 (GeckoMain) **[CRASHING]**\n\n```\n"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("### Thread 1 (Compositor)\n\n```\n"),
+            "{}",
+            output
+        );
+        assert!(!output.contains("identical"), "{}", output);
+        assert!(!output.contains("Identical stacks:"), "{}", output);
+    }
+
+    #[test]
+    fn test_format_crash_markdown_all_threads_group_heading_and_members() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![grouped_thread(
+            5,
+            Some("TaskController #0"),
+            &[
+                (6, Some("TaskController #1")),
+                (7, Some("TaskController #2")),
+                (8, Some("TaskController #3")),
+                (9, Some("TaskController #4")),
+                (10, Some("TaskController #5")),
+                (11, Some("TaskController #6")),
+                (12, Some("TaskController #7")),
+            ],
+        )];
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert!(
+            output.contains("### Thread 5 (TaskController #0) + 7 identical\n\n"),
+            "{}",
+            output
+        );
+        // Only the folded threads are listed; the representative is already in
+        // the heading, and the list precedes the code fence.
+        assert!(
+            output.contains(
+                "Identical stacks: 6 (TaskController #1), 7 (TaskController #2), \
+8 (TaskController #3), 9 (TaskController #4), 10 (TaskController #5), \
+11 (TaskController #6), 12 (TaskController #7)\n\n```\n"
+            ),
+            "{}",
+            output
+        );
+        assert!(
+            !output.contains("Identical stacks: 5 (TaskController #0)"),
+            "{}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_format_crash_markdown_all_threads_unnamed_member() {
+        let mut summary = sample_crash_summary();
+        summary.all_threads = vec![grouped_thread(
+            2,
+            None,
+            &[(3, None), (4, Some("Cache2 I/O"))],
+        )];
+        let output = format_crash(&summary, ModulesMode::None);
+
+        assert!(
+            output.contains("### Thread 2 (unknown) + 2 identical\n\n"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("Identical stacks: 3 (unknown), 4 (Cache2 I/O)\n"),
+            "{}",
+            output
+        );
     }
 
     #[test]
