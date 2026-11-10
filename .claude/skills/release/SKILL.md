@@ -12,4 +12,4 @@ description: Tag a new version, make a new release
 5. Commit: `git commit -am "Bump version to X.Y.Z"`
 6. Tag: `git tag -a vX.Y.Z -m "Release vX.Y.Z\n\n- Feature 1\n- Feature 2"`
 7. Push: `git push origin main && git push origin vX.Y.Z`
-8. Publish to crates.io: `cargo publish`
+8. Publish to crates.io: `cargo publish --target-dir target/package-verify` (the separate target dir keeps the verification build from leaving `target/debug` stale; see the packaging step in `CLAUDE.md`)
