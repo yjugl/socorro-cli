@@ -21,13 +21,13 @@ data, with output optimized for LLM agents.
 
 EXAMPLES:
     # Fetch a specific crash by ID
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901
+    socorro-cli crash <CRASH_ID>
 
     # Fetch a crash using a Socorro URL (copy-paste from browser)
-    socorro-cli crash https://crash-stats.mozilla.org/report/index/b98bbb81-...
+    socorro-cli crash https://crash-stats.mozilla.org/report/index/<CRASH_ID>
 
     # Add crash annotations (shutdown blockers, app notes, proto signature)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
+    socorro-cli crash <CRASH_ID> --annotations
 
     # Search for crashes by signature
     socorro-cli search --signature \"OOM | small\"
@@ -67,13 +67,9 @@ UPDATE CHECK:
     In such cases, either redirect stderr separately or set MOZTOOLS_UPDATE_CHECK=0.
 
 CACHE:
-    'crash-pings' caches each day of downloaded ping data (~10 MB per day) in a
-    'socorro-cli' subdirectory of the OS cache directory, which is
-    ~/.cache/socorro-cli on Linux. Set SOCORRO_CACHE_DIR to relocate it.
-
-    That value is used verbatim as the cache directory: no 'socorro-cli'
-    component is appended, so SOCORRO_CACHE_DIR=/tmp/x writes
-    /tmp/x/crash-pings-<date>.json. Unset or blank falls back to the default.
+    'crash-pings' caches downloaded ping data (~10 MB per day) under the OS
+    cache directory (~/.cache/socorro-cli on Linux). Set SOCORRO_CACHE_DIR to
+    relocate it; the value is used as-is, with no 'socorro-cli' subdirectory.
 
 WORKFLOW:
     # 1. Find top crash signatures
@@ -112,76 +108,55 @@ const CRASH_ABOUT: &str = "\
 Fetch details about a specific crash from Socorro.
 
 The crash ID can be:
-  - A bare UUID: b98bbb81-3ff6-4825-991f-6a0b30260901
-  - A full Socorro URL: https://crash-stats.mozilla.org/report/index/b98bbb81-...
+  - A bare UUID, e.g. b98bbb81-3ff6-4825-991f-6a0b30260901
+  - A full Socorro URL: https://crash-stats.mozilla.org/report/index/<CRASH_ID>
 
 EXAMPLES:
     # Basic crash lookup (compact output, includes modules from stack)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901
+    socorro-cli crash <CRASH_ID>
 
     # Show more stack frames
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --depth 20
+    socorro-cli crash <CRASH_ID> --depth 20
 
     # Show all threads, grouping threads that share a stack (deadlock analysis)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads
+    socorro-cli crash <CRASH_ID> --all-threads
 
-    # All threads at minimal depth, for a cheap overview of what every thread
-    # is doing (2,804 bytes for a 64-thread crash)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 1
-
-    # All threads with the full default depth, splitting groups that agree only
-    # on their first few frames
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 10
+    # Cheapest overview of what every thread is doing
+    socorro-cli crash <CRASH_ID> --all-threads --depth 1
 
     # Hide modules section
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --modules none
+    socorro-cli crash <CRASH_ID> --modules none
 
     # Show all loaded modules (for compatibility/environment analysis)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --modules full
+    socorro-cli crash <CRASH_ID> --modules full
 
-    # Show only third-party modules (not signed by Mozilla or Microsoft)
-    socorro-cli crash 5ec89bc3-404d-4689-a5f3-54fb00260318 --modules third-party
-
-    # Show crash annotations (shutdown blockers, app notes, proto signature)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
+    # Show only third-party modules (Windows crashes only)
+    socorro-cli crash <CRASH_ID> --modules third-party
 
     # Diagnose a shutdown hang: annotations plus a deeper stack
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations --depth 20
+    socorro-cli crash <CRASH_ID> --annotations --depth 20
 
     # Get full JSON data (the API response verbatim)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --full
+    socorro-cli crash <CRASH_ID> --full
 
 ALL THREADS:
-    --all-threads shows every thread, not just the crashing one. Two things
-    keep that affordable.
-    Threads whose displayed frames are identical are folded into a single
-    block whose header names every member on one line, for example
-    'stack[5 threads: 11:StyleThread#1, 12:StyleThread#2, ...]'. A count line
-    above the first stack reports the totals, e.g.
-    'threads: 64 total, 28 distinct stacks shown', so folding is never silent.
-    The crashing thread is never folded into a group and never accepts members,
-    so its [CRASHING] marker is always unambiguous.
-    --all-threads also lowers the default --depth from 10 to 5, since the
-    per-thread cost is multiplied by the thread count. On the reference crash
-    above (64 threads) the two changes together take compact output from
-    80,736 bytes and 64 stack blocks to 17,545 bytes and 28.
-    Grouping compares the *displayed* frames, not the full ones, so --depth
-    changes the grouping: the same crash reports 28 distinct stacks at the
-    default depth 5 and 30 at --depth 10 (41,234 bytes). An explicit --depth
-    always wins over both defaults.
+    --all-threads shows every thread, not just the crashing one, and lowers
+    the default --depth from 10 to 5. Threads whose displayed frames are
+    identical are folded into one block whose header names every member, e.g.
+    'stack[5 threads: 11:StyleThread#1, 12:StyleThread#2, ...]', and a line
+    such as 'threads: 64 total, 28 distinct stacks shown' reports the totals.
+    The crashing thread is never folded. Grouping compares only the displayed
+    frames, so a larger --depth can split groups.
 
 ANNOTATIONS:
     --annotations adds a section of crash annotations to compact and markdown
-    output. It is opt-in because it costs extra output: on the crash above the
-    compact form grows from 2,665 to 4,834 bytes.
-    Fields shown, when present: shutdown (the async_shutdown_timeout blocker
-    list, with each condition's file:line and state), shutdown_progress,
-    shutdown_reason, spin_event_loop, app_notes, last_error,
-    crash_inconsistencies, topmost_filenames, modules_in_stack and
-    proto_signature. If none are present the section reads
-    'annotations: (none)'.
-    The flag is silently ignored with --full and --format json, which already
-    contain every annotation the API returned.
+    output; it is opt-in because it can roughly double the output. Fields
+    shown, when present: shutdown (the async_shutdown_timeout blockers, with
+    each condition's file:line and state), shutdown_progress, shutdown_reason,
+    spin_event_loop, app_notes, last_error, crash_inconsistencies,
+    topmost_filenames, modules_in_stack and proto_signature. With none present
+    the section reads 'annotations: (none)'. Ignored with --full and
+    --format json, which already contain every annotation.
 
 MODULES:
     --modules controls which loaded modules are listed in the output.
@@ -194,19 +169,13 @@ MODULES:
     by Mozilla or Microsoft — useful for identifying injected DLLs from antivirus,
     DRM, etc. This relies on Authenticode cert_subject, which is only present in
     Windows crash reports.
-    --modules only applies to compact and markdown output; --full already
-    dumps everything as raw JSON. Because of that, --modules third-party is
-    not rejected on a non-Windows crash when the output is JSON — it is simply
-    ignored. Compact and markdown still report an error.
+    --modules only applies to compact and markdown output. It is ignored with
+    --full and --format json, so 'third-party' does not error there.
 
 FULL OUTPUT:
     --full (and --format json) print the /ProcessedCrash/ response verbatim,
-    pretty-printed. Two things not to assume about it:
-    The set of keys is per-crash, not a fixed schema — the reference Windows
-    crash above returns 85 top-level keys, while two Linux nightly crashes
-    returned 81 and 77. Do not hard-code a key list.
-    Key order is alphabetical rather than the server's order, because
-    serde_json is built without its 'preserve_order' feature. No key is lost.
+    pretty-printed, with keys sorted alphabetically. The set of keys varies
+    from crash to crash: do not assume a fixed schema.
 
 RATE LIMITS:
     --full and --format json skip the API token so the server strips protected

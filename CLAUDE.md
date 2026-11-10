@@ -24,6 +24,8 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 
 Replace only the IDs that actually return 404. Note that expired IDs legitimately remain in offline unit-test fixtures (URL parsing, deserialization) across `src/`, where liveness is irrelevant — leave those alone; only documentation examples and live invocations need a working ID.
 
+The `--help` text in `src/main.rs` is the exception: it ships inside the binary, where an ID cannot be replaced once it expires, so its examples use a `<CRASH_ID>` placeholder. Keep it that way, and keep measured byte counts out of `--help` too — they drift, and every agent that reads the help pays for them. Concrete IDs and measurements belong in `README.md` and here.
+
 ## Build & Development Commands
 
 ```bash
