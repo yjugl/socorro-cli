@@ -232,7 +232,7 @@ It exists for test isolation, and the need is specific rather than theoretical: 
 
 **Version Checking**: On startup, `moz-cli-version-check` asynchronously checks for newer releases on crates.io. If a newer version is found, a warning is printed to stderr after the command completes. Environments that merge stderr into stdout (e.g. shell `2>&1` redirects) should either redirect stderr separately or set `MOZTOOLS_UPDATE_CHECK=0` to avoid corrupting JSON output.
 
-**Error Handling**: Uses `thiserror` for structured errors. The `Error` enum variants:
+**Error Handling**: Uses `thiserror` for structured errors. The `Error` enum is `#[non_exhaustive]`, so adding a variant is not a breaking library change. Its variants:
 - `Http` — wraps `reqwest::Error` for network/HTTP failures
 - `Json` — wraps `serde_json::Error` for deserialization failures
 - `NotFound` — 404 responses, with context (crash ID or date)

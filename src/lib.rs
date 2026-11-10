@@ -21,7 +21,10 @@ pub use output::OutputFormat;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// `#[non_exhaustive]` so that adding a variant (as `UnexpectedStatus` was) is
+/// not a breaking change for library users who match on this enum.
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),

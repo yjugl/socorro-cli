@@ -56,9 +56,10 @@ All notable changes to this project will be documented in this file.
   and GitHub Actions to their latest major versions.
 - Fixed the release workflow's `cargo-about` install (now needs the `cli`
   feature).
-- Library API: `commands::crash::execute` takes a `CrashParams` struct, the
-  `Error` enum gained `UnexpectedStatus`, and `output::json::format_crash` was
-  removed.
+- Library API (breaking): `commands::crash::execute` takes a `CrashParams`
+  struct, `output::json::format_crash` was removed, and the `Error` enum gained
+  `UnexpectedStatus` and is now `#[non_exhaustive]`, so future variants will
+  not break downstream `match`es.
 
 ## [0.6.0] - 2026-04-22
 
