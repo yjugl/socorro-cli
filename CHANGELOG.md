@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-10
+
 ### New Features
 
 - **`--annotations` flag for `crash`**: Adds a section of crash annotations to
