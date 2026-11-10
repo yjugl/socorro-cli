@@ -24,6 +24,8 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 
 Replace only the IDs that actually return 404. Note that expired IDs legitimately remain in offline unit-test fixtures (URL parsing, deserialization) across `src/`, where liveness is irrelevant — leave those alone; only documentation examples and live invocations need a working ID.
 
+The `--help` text in `src/main.rs` is the exception: it ships inside the binary, where an ID cannot be replaced once it expires, so its examples use a `<CRASH_ID>` placeholder. Keep it that way, and keep measured byte counts out of `--help` too — they drift, and every agent that reads the help pays for them. Concrete IDs and measurements belong in `README.md` and here.
+
 ## Build & Development Commands
 
 ```bash
@@ -76,7 +78,7 @@ cargo clippy
 2. **Format**: `cargo fmt`
 3. **Lint**: `cargo clippy` — fix any warnings. Plain `cargo clippy` is what this checklist requires, and it is clean. Note that `cargo clippy --all-targets` additionally reports one pre-existing warning, `items after a test module` in `src/output/compact.rs` (several `pub fn`s are declared below the `mod tests` block); it is known and out of scope, so do not treat it as something your change introduced.
 4. **Test**: `cargo test` — all tests must pass.
-5. **Verify packaging `include` is complete**: After any significant change (new source file outside `src/`, new top-level asset referenced at build time such as a `build.rs`/`include_str!`/`include_bytes!` target, new test/bench/example directory, or renamed top-level file), run `cargo package --allow-dirty` and confirm the verification step compiles successfully against the extracted tarball in `target/package/`. The `include` directive in `Cargo.toml` is a strict allowlist — anything not listed is silently dropped from the published crate, and missing files will only surface as a build failure on the first downstream user. Add new required paths to `include` before publishing.
+5. **Verify packaging `include` is complete**: After any significant change (new source file outside `src/`, new top-level asset referenced at build time such as a `build.rs`/`include_str!`/`include_bytes!` target, new test/bench/example directory, or renamed top-level file), run `cargo package --allow-dirty --target-dir target/package-verify` and confirm the verification step compiles successfully against the extracted tarball in `target/package-verify/package/`. **Keep the `--target-dir`.** Without it, the verification build compiles the extracted copy into the shared `target/debug` and takes over the same fingerprint slots, for both the library and the binary. Those slots then track the sources under `target/package/socorro-cli-<version>/src/` instead of `src/`, so later edits to `src/` are silently not rebuilt: `cargo build` reports `Finished` and the binary keeps serving old code (observed with cargo 1.95.0). The isolated directory costs about 40 s the first time and is cached afterwards. If a build has already gone stale, `cargo clean -p socorro-cli` fixes it. The `include` directive in `Cargo.toml` is a strict allowlist — anything not listed is silently dropped from the published crate, and missing files will only surface as a build failure on the first downstream user. Add new required paths to `include` before publishing.
 
 **License header requirement:** Every new `.rs` source file must include the MPL 2.0 header as the very first lines:
 
@@ -230,7 +232,7 @@ It exists for test isolation, and the need is specific rather than theoretical: 
 
 **Version Checking**: On startup, `moz-cli-version-check` asynchronously checks for newer releases on crates.io. If a newer version is found, a warning is printed to stderr after the command completes. Environments that merge stderr into stdout (e.g. shell `2>&1` redirects) should either redirect stderr separately or set `MOZTOOLS_UPDATE_CHECK=0` to avoid corrupting JSON output.
 
-**Error Handling**: Uses `thiserror` for structured errors. The `Error` enum variants:
+**Error Handling**: Uses `thiserror` for structured errors. The `Error` enum is `#[non_exhaustive]`, so adding a variant is not a breaking library change. Its variants:
 - `Http` — wraps `reqwest::Error` for network/HTTP failures
 - `Json` — wraps `serde_json::Error` for deserialization failures
 - `NotFound` — 404 responses, with context (crash ID or date)

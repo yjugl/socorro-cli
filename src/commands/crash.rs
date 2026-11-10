@@ -103,7 +103,7 @@ const DEFAULT_DEPTH: usize = 10;
 /// `b98bbb81-3ff6-4825-991f-6a0b30260901`, which has 64 threads:
 /// `crash <id> --all-threads` emitted 80,736 bytes at depth 10, so the tail of
 /// the thread list was silently cut off before the reader ever saw it. At depth
-/// 5 the same command is 34,320 bytes.
+/// 5, and with identical stacks grouped, the same command is 17,545 bytes.
 const DEFAULT_ALL_THREADS_DEPTH: usize = 5;
 
 /// Resolves the stack depth to use from the optional `--depth` flag.

@@ -19,64 +19,8 @@ Socorro collects and analyzes crash reports from Firefox, Fenix, Thunderbird,
 and other Mozilla products. This tool fetches crash details and searches crash
 data, with output optimized for LLM agents.
 
-EXAMPLES:
-    # Fetch a specific crash by ID
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901
-
-    # Fetch a crash using a Socorro URL (copy-paste from browser)
-    socorro-cli crash https://crash-stats.mozilla.org/report/index/b98bbb81-...
-
-    # Add crash annotations (shutdown blockers, app notes, proto signature)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
-
-    # Search for crashes by signature
-    socorro-cli search --signature \"OOM | small\"
-
-    # Search Firefox crashes from last 30 days, aggregate by version
-    socorro-cli search --product Firefox --days 30 --facet version
-
-    # Search a specific date or date range
-    socorro-cli search --signature \"OOM | small\" --date 2026-02-20
-    socorro-cli search --signature \"OOM | small\" --from 2026-02-10 --to 2026-02-20
-
-    # List top crash signatures by volume (like the Top Crashers web UI)
-    socorro-cli search --facet signature
-
-    # Show correlations for a crash signature
-    socorro-cli correlations --signature \"OOM | small\"
-
-    # Top crash signatures from yesterday's opt-out crash pings
-    socorro-cli crash-pings
-
-    # Crash pings filtered by channel and OS
-    socorro-cli crash-pings --channel release --os Windows
-
-API TOKEN:
-    For higher rate limits, humans can run 'socorro-cli auth login' to store a token.
-    Humans can create tokens at: https://crash-stats.mozilla.org/api/tokens/
-    IMPORTANT: Tokens MUST have NO permissions (provides rate limit benefits
-    only) to ensure there is no chance that the server returns protected data.
-
-UPDATE CHECK:
-    On each run, socorro-cli checks crates.io for a newer version (cached daily,
-    5-second timeout). If an update is available, a notice is printed to stderr
-    after the command output. Set MOZTOOLS_UPDATE_CHECK=0 to disable.
-
-    Important: the update notice goes to stderr only. If your environment merges
-    stderr into stdout (e.g. shell 2>&1 redirects), it may corrupt JSON output.
-    In such cases, either redirect stderr separately or set MOZTOOLS_UPDATE_CHECK=0.
-
-CACHE:
-    'crash-pings' caches each day of downloaded ping data (~10 MB per day) in a
-    'socorro-cli' subdirectory of the OS cache directory, which is
-    ~/.cache/socorro-cli on Linux. Set SOCORRO_CACHE_DIR to relocate it.
-
-    That value is used verbatim as the cache directory: no 'socorro-cli'
-    component is appended, so SOCORRO_CACHE_DIR=/tmp/x writes
-    /tmp/x/crash-pings-<date>.json. Unset or blank falls back to the default.
-
 WORKFLOW:
-    # 1. Find top crash signatures
+    # 1. Find top crash signatures (like the Top Crashers web UI)
     socorro-cli search --facet signature
 
     # 2. Examine a specific signature
@@ -85,11 +29,31 @@ WORKFLOW:
     # 3. Check if there are existing Bugzilla bugs for this crash
     socorro-cli bugs --signature \"OOM | small\"
 
-    # 4. Debug a specific crash instance
-    socorro-cli crash <crash_id from step 2>
+    # 4. Debug a specific crash instance (ID or Socorro URL from step 2)
+    socorro-cli crash <CRASH_ID> --annotations
 
     # 5. Find patterns across all crashes with this signature
-    socorro-cli correlations --signature \"OOM | small\"";
+    socorro-cli correlations --signature \"OOM | small\"
+
+    # 6. Measure the signature's volume in opt-out crash pings
+    socorro-cli crash-pings --signature \"OOM | small\"
+
+API TOKEN:
+    For higher rate limits, humans can run 'socorro-cli auth login' to store a token.
+    Humans can create tokens at: https://crash-stats.mozilla.org/api/tokens/
+    IMPORTANT: Tokens MUST have NO permissions (provides rate limit benefits
+    only) to ensure there is no chance that the server returns protected data.
+
+UPDATE CHECK:
+    Each run checks crates.io for a newer version (cached daily) and, if there
+    is one, prints a notice to stderr after the output. Where stderr is merged
+    into stdout (2>&1) the notice can corrupt JSON output; redirect stderr
+    separately or set MOZTOOLS_UPDATE_CHECK=0 to disable the check.
+
+CACHE:
+    'crash-pings' caches downloaded ping data (~10 MB per day) under the OS
+    cache directory (~/.cache/socorro-cli on Linux). Set SOCORRO_CACHE_DIR to
+    relocate it; the value is used as-is, with no 'socorro-cli' subdirectory.";
 
 #[derive(Parser)]
 #[command(name = "socorro-cli")]
@@ -100,7 +64,7 @@ WORKFLOW:
     after_help = "Use 'socorro-cli <command> --help' for more information on a specific command."
 )]
 struct Cli {
-    /// Output format: compact (default, token-efficient), json, or markdown. Note: json skips the API token for crash fetches (see 'crash --help')
+    /// Output format (compact is the token-efficient default)
     #[arg(long, value_enum, default_value = "compact", global = true)]
     format: OutputFormat,
 
@@ -112,131 +76,80 @@ const CRASH_ABOUT: &str = "\
 Fetch details about a specific crash from Socorro.
 
 The crash ID can be:
-  - A bare UUID: b98bbb81-3ff6-4825-991f-6a0b30260901
-  - A full Socorro URL: https://crash-stats.mozilla.org/report/index/b98bbb81-...
+  - A bare UUID, e.g. b98bbb81-3ff6-4825-991f-6a0b30260901
+  - A full Socorro URL: https://crash-stats.mozilla.org/report/index/<CRASH_ID>
 
 EXAMPLES:
     # Basic crash lookup (compact output, includes modules from stack)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901
-
-    # Show more stack frames
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --depth 20
+    socorro-cli crash <CRASH_ID>
 
     # Show all threads, grouping threads that share a stack (deadlock analysis)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads
+    socorro-cli crash <CRASH_ID> --all-threads
 
-    # All threads at minimal depth, for a cheap overview of what every thread
-    # is doing (2,804 bytes for a 64-thread crash)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 1
+    # Cheapest overview of what every thread is doing
+    socorro-cli crash <CRASH_ID> --all-threads --depth 1
 
-    # All threads with the full default depth, splitting groups that agree only
-    # on their first few frames
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --all-threads --depth 10
-
-    # Hide modules section
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --modules none
-
-    # Show all loaded modules (for compatibility/environment analysis)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --modules full
-
-    # Show only third-party modules (not signed by Mozilla or Microsoft)
-    socorro-cli crash 5ec89bc3-404d-4689-a5f3-54fb00260318 --modules third-party
-
-    # Show crash annotations (shutdown blockers, app notes, proto signature)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations
+    # Show only third-party modules (Windows crashes only)
+    socorro-cli crash <CRASH_ID> --modules third-party
 
     # Diagnose a shutdown hang: annotations plus a deeper stack
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --annotations --depth 20
+    socorro-cli crash <CRASH_ID> --annotations --depth 20
 
     # Get full JSON data (the API response verbatim)
-    socorro-cli crash b98bbb81-3ff6-4825-991f-6a0b30260901 --full
+    socorro-cli crash <CRASH_ID> --full
 
 ALL THREADS:
-    --all-threads shows every thread, not just the crashing one. Two things
-    keep that affordable.
-    Threads whose displayed frames are identical are folded into a single
-    block whose header names every member on one line, for example
-    'stack[5 threads: 11:StyleThread#1, 12:StyleThread#2, ...]'. A count line
-    above the first stack reports the totals, e.g.
-    'threads: 64 total, 28 distinct stacks shown', so folding is never silent.
-    The crashing thread is never folded into a group and never accepts members,
-    so its [CRASHING] marker is always unambiguous.
-    --all-threads also lowers the default --depth from 10 to 5, since the
-    per-thread cost is multiplied by the thread count. On the reference crash
-    above (64 threads) the two changes together take compact output from
-    80,736 bytes and 64 stack blocks to 17,545 bytes and 28.
-    Grouping compares the *displayed* frames, not the full ones, so --depth
-    changes the grouping: the same crash reports 28 distinct stacks at the
-    default depth 5 and 30 at --depth 10 (41,234 bytes). An explicit --depth
-    always wins over both defaults.
+    --all-threads shows every thread, not just the crashing one, and lowers
+    the default --depth from 10 to 5. Threads whose displayed frames are
+    identical are folded into one block whose header names every member, e.g.
+    'stack[5 threads: 11:StyleThread#1, 12:StyleThread#2, ...]', and a line
+    such as 'threads: 64 total, 28 distinct stacks shown' reports the totals.
+    The crashing thread is never folded. Grouping compares only the displayed
+    frames, so a larger --depth can split groups.
 
 ANNOTATIONS:
     --annotations adds a section of crash annotations to compact and markdown
-    output. It is opt-in because it costs extra output: on the crash above the
-    compact form grows from 2,665 to 4,834 bytes.
-    Fields shown, when present: shutdown (the async_shutdown_timeout blocker
-    list, with each condition's file:line and state), shutdown_progress,
-    shutdown_reason, spin_event_loop, app_notes, last_error,
-    crash_inconsistencies, topmost_filenames, modules_in_stack and
-    proto_signature. If none are present the section reads
-    'annotations: (none)'.
-    The flag is silently ignored with --full and --format json, which already
-    contain every annotation the API returned.
+    output; it is opt-in because it can roughly double the output. Fields
+    shown, when present: shutdown (the async_shutdown_timeout blockers, with
+    each condition's file:line and state), shutdown_progress, shutdown_reason,
+    spin_event_loop, app_notes, last_error, crash_inconsistencies,
+    topmost_filenames, modules_in_stack and proto_signature. With none present
+    the section reads 'annotations: (none)'. Ignored with --full and
+    --format json, which already contain every annotation.
 
 MODULES:
-    --modules controls which loaded modules are listed in the output.
-    Default is 'stack' which lists modules referenced by the displayed stack
-    frames, with debug info (debug_file, debug_id, code_id, version). This
-    provides exactly what 'symdis disasm' needs for disassembly.
-    Use 'full' to list ALL loaded modules (can be 38-481 depending on platform).
-    Use 'none' to omit the modules section entirely.
-    Use 'third-party' (WINDOWS CRASHES ONLY) to list only modules not signed
-    by Mozilla or Microsoft — useful for identifying injected DLLs from antivirus,
-    DRM, etc. This relies on Authenticode cert_subject, which is only present in
-    Windows crash reports.
-    --modules only applies to compact and markdown output; --full already
-    dumps everything as raw JSON. Because of that, --modules third-party is
-    not rejected on a non-Windows crash when the output is JSON — it is simply
-    ignored. Compact and markdown still report an error.
+    The default, 'stack', lists the modules referenced by the displayed frames
+    with their debug info (debug_file, debug_id, code_id, version): exactly
+    what 'symdis disasm' needs. 'third-party' lists modules not signed by
+    Mozilla or Microsoft (e.g. injected antivirus or DRM DLLs); it relies on
+    the Authenticode cert_subject, which only Windows crash reports carry.
+    --modules is ignored with --full and --format json.
 
 FULL OUTPUT:
     --full (and --format json) print the /ProcessedCrash/ response verbatim,
-    pretty-printed. Two things not to assume about it:
-    The set of keys is per-crash, not a fixed schema — the reference Windows
-    crash above returns 85 top-level keys, while two Linux nightly crashes
-    returned 81 and 77. Do not hard-code a key list.
-    Key order is alphabetical rather than the server's order, because
-    serde_json is built without its 'preserve_order' feature. No key is lost.
+    pretty-printed, with keys sorted alphabetically. The set of keys varies
+    from crash to crash: do not assume a fixed schema.
 
-RATE LIMITS:
-    --full and --format json skip the API token so the server strips protected
-    fields from the response. This is a defense-in-depth measure against human
-    error (e.g., accidentally creating a token with view_pii permission). The
-    primary safeguard is ensuring your token has NO permissions — humans can
-    verify this at https://crash-stats.mozilla.org/api/tokens/. These modes use
-    unauthenticated rate limits even when a token is configured. Compact and
-    markdown formats are unaffected and still benefit from the token's higher
-    rate limits.
+    These modes skip the API token so the server strips protected fields, as
+    a defense in depth should a token wrongly carry permissions. They are
+    therefore subject to unauthenticated rate limits; compact and markdown
+    output still use the token.
 
 OUTPUT FIELDS:
-    sig         - Crash signature (identifies the crash type; often the crashing function, but can also be a category like \"OOM | small\" or \"shutdownhang | ...\")
+    sig         - Crash signature: often the crashing function, but can be a category like \"OOM | small\" or \"shutdownhang | ...\"
     reason      - OS-level crash type and address (SIGSEGV, EXCEPTION_ACCESS_VIOLATION, etc.)
     type        - Report type (crash/hang), process (parent/content/gpu/...), uptime, thread count, and 'startup' for a startup crash
     moz_reason  - MOZ_CRASH/MOZ_RELEASE_ASSERT message (Mozilla code intentionally triggered the crash)
     abort       - C/C++ abort() message (third-party or stdlib code called abort)
-    product     - Product name and version (Firefox 120.0, Fenix 147.0.1, etc.)
     build       - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
-    channel     - Release channel (release, beta, nightly, esr, aurora, default)
-    threads     - Thread and distinct-stack counts (only with --all-threads; see ALL THREADS above)
-    stack       - Stack trace of the crashing thread, or of a group of threads sharing one
-    modules     - Loaded modules with debug info (controlled by --modules)
-    annotations - Extra crash annotations (only with --annotations; see ANNOTATIONS above)";
+    stack       - Stack trace of the crashing thread, or of a group of threads sharing one";
 
 const SEARCH_ABOUT: &str = "\
 Search and aggregate crashes from Socorro.
 
-Searches the Super Search API for crashes matching the specified filters.
-Use --facet to aggregate results by field (can be repeated).
+Searches the Super Search API for crashes matching all of the specified
+filters (they combine with AND). Use --facet to aggregate results by field
+(can be repeated).
 
 EXAMPLES:
     # Find crashes with a specific signature
@@ -245,65 +158,27 @@ EXAMPLES:
     # Search Fenix crashes from last 14 days
     socorro-cli search --product Fenix --days 14
 
-    # Search a specific date
-    socorro-cli search --signature \"OOM | small\" --date 2026-02-20
-
-    # Search a date range
-    socorro-cli search --signature \"OOM | small\" --from 2026-02-10 --to 2026-02-20
+    # Find Windows crashes for a specific version
+    socorro-cli search --product Firefox --platform Windows --version 147.0.4
 
     # Aggregate by platform and version
     socorro-cli search --product Firefox --facet platform --facet version
 
-    # Find Windows crashes for a specific version
-    socorro-cli search --product Firefox --platform Windows --version 147.0.4
-
-    # Find crashes on ARM64 architecture
-    socorro-cli search --product Firefox --cpu-arch arm64
-
-    # Find nightly crashes only
-    socorro-cli search --product Firefox --channel nightly
-
-    # Find content process crashes
-    socorro-cli search --signature \"OOM | small\" --process-type content
-
     # Break down a signature by process type
     socorro-cli search --signature \"OOM | small\" --facet process_type
-
-    # Break down crashes by OS version
-    socorro-cli search --signature \"OOM | small\" --facet platform_version
 
     # Filter to a specific Windows build
     socorro-cli search --signature \"OOM | small\" --platform-version \"~10.0.26100\"
 
-NOTE: The crash-pings command uses a different data source with different flag
-    names and values. Do not assume the same flags or values work across both
-    commands — check 'socorro-cli crash-pings --help'.
+NOTE: 'crash-pings' uses a different data source, with different flag names and values.
 
 TOP CRASHERS:
-    To list the top crash signatures by volume (like the Socorro web UI's
-    Top Crashers page), use --facet signature:
+    --facet signature lists the top signatures by volume, like the Socorro web
+    UI's Top Crashers page:
 
-    # Top 50 Firefox crashers in the last 7 days (default facets size)
-    socorro-cli search --facet signature
-
-    # Top 20 nightly crashers in the last 14 days
     socorro-cli search --channel nightly --days 14 --facet signature --facets-size 20
 
-    # Top 100 Fenix crashers on Android
-    socorro-cli search --product Fenix --facet signature --facets-size 100
-
-    When --facet is used, individual crash rows are hidden by default
-    (only aggregated counts are shown). Use --limit 10 to also show
-    individual crashes alongside the aggregations.
-    --facets-size controls how many top signatures are returned (default: 50).
-
-DATE RANGES:
-    By default, searches the last 7 days. Use --days N for a different window,
-    --date for a single day, or --from/--to for an arbitrary range.
-    Both --from and --to are inclusive (--from 02-10 --to 02-12 includes all
-    three days). --from without --to defaults --to to today.
-    --date D is equivalent to --from D --to D.
-    These flags are mutually exclusive.
+    With --facet, individual crash rows are hidden unless --limit N is given.
 
 FILTER OPERATORS:
     Exact match:  --signature \"OOM | small\" (default)
@@ -312,39 +187,12 @@ FILTER OPERATORS:
     flags support operator prefixes (~, $, ^, !, @, etc.).
     See https://crash-stats.mozilla.org/documentation/supersearch/ for details.
 
-PROTO SIGNATURE:
-    The proto signature is the raw, unsymbolicated crash signature before
-    Socorro's signature generation. Use --proto-signature to search by it.
-    Contains:     --proto-signature \"~libxul.so@0x123abc\"
-
-PRODUCTS:
-    Firefox, Fenix, Thunderbird, Firefox Focus, etc.
-
-PLATFORMS:
-    Windows, Linux, Mac OS X, Android
-
-CPU ARCHITECTURES:
-    amd64, x86, arm64, arm
-
-RELEASE CHANNELS:
-    release, beta, nightly, esr, aurora, default
-    NOTE: \"aurora\" is the channel used by Firefox Developer Edition.
-    NOTE: Linux distro builds often report channel as \"default\" instead
-    of \"release\". To find all release-like crashes, run two searches:
-      socorro-cli search --channel release ...
-      socorro-cli search --channel default ...
-
-PROCESS TYPES:
-    parent, content, gpu, rdd, utility, socket, gmplugin, plugin
-    NOTE: \"parent\" is the main/browser process.
-
-PLATFORM VERSIONS:
-    Values are OS version strings from the crash report, e.g.:
-      Windows: \"10.0.19045\", \"10.0.26100\"
-      macOS:   \"15.7.3 24G419\", \"10.13.6 17G14042\"
-      Android: \"28\", \"36\" (API levels)
-    Use --facet platform_version to see which OS builds are affected.
-    Use --platform-version \"~10.0.26100\" to filter (~ prefix for contains match).
+VALUES:
+    Channel \"aurora\" is Firefox Developer Edition. Linux distro builds often
+    report \"default\" instead of \"release\": search both to cover release-like
+    crashes. Process type \"parent\" is the main/browser process.
+    --platform-version takes the OS version string from the crash report, e.g.
+    Windows \"10.0.26100\", macOS \"15.7.3 24G419\", Android \"36\" (API level).
 
 FACET / SORT FIELDS:
     signature, proto_signature, product, version, platform, cpu_arch,
@@ -353,44 +201,25 @@ FACET / SORT FIELDS:
     build_id, date, reason, address, cpu_info, cpu_count, uptime
     Use -field for descending sort (e.g., --sort -date).
 
-FILTER LOGIC:
-    Multiple filters are combined with AND logic.
-    Example: --platform Windows --channel nightly returns only
-    crashes that are both Windows AND nightly.
-
-OUTPUT FIELDS:
-    crash_id    - Full crash UUID (usable with 'socorro-cli crash')
-    product     - Product name and version
-    platform    - Operating system name and version (e.g., Windows NT 10.0.19045)
-    channel     - Release channel (release, beta, nightly, esr, aurora, default)
-    build_id    - Mozilla build ID timestamp (YYYYMMDDHHMMSS)
-    signature   - Crash signature";
+OUTPUT:
+    Compact output has one row per crash:
+    crash_id | date | product version | platform | channel | build_id | signature
+    crash_id is usable with 'socorro-cli crash'; build_id is YYYYMMDDHHMMSS.";
 
 const CRASH_PINGS_ABOUT: &str = "\
 Query Firefox crash pings from crash-pings.mozilla.org.
 
 Crash pings are opt-out telemetry (~1.7M/day), representing the actual crash
 experience of the Firefox user base. Unlike Socorro crash reports (opt-in,
-~40K/day), crash pings are not biased toward users who click 'submit'.
+~40K/day), crash pings are not biased toward users who click 'submit'. Use
+crash-pings for volume and trend analysis, and 'crash' for deep debugging.
 
 Data is a daily sample (~5000 pings per OS/process-type for release; more for
 beta/nightly), available ~04:00 UTC for the previous day.
 
-Downloaded data is cached locally so repeated queries for the same date are
-instant.
-
 EXAMPLES:
     # Top crash signatures from yesterday's pings
     socorro-cli crash-pings
-
-    # Specify date
-    socorro-cli crash-pings --date 2026-02-12
-
-    # Query a date range
-    socorro-cli crash-pings --from 2026-02-10 --to 2026-02-12
-
-    # Query the last 7 days
-    socorro-cli crash-pings --days 7
 
     # Filter by channel, OS, process type, version
     socorro-cli crash-pings --channel release --os Windows
@@ -400,24 +229,19 @@ EXAMPLES:
     socorro-cli crash-pings --signature \"OOM | small\"
     socorro-cli crash-pings --signature \"~AudioDecoder\"
 
-    # Aggregate by a field instead of signature
-    socorro-cli crash-pings --signature \"OOM | small\" --facet os
-    socorro-cli crash-pings --facet process
+    # Aggregate by a field instead of signature, over the last 7 days
+    socorro-cli crash-pings --signature \"OOM | small\" --facet os --days 7
 
-    # Fetch symbolicated stack for a specific crash ping
-    socorro-cli crash-pings --stack b343be53-8ec1-4849-98eb-ca6739a45645 --date 2026-02-23
+    # Fetch the symbolicated stack of a ping ID listed in the output for a date
+    socorro-cli crash-pings --stack <PING_ID> --date <DATE>
 
-NOTE: The search command uses a different data source with different flag
-    names and values. Do not assume the same flags or values work across both
-    commands — check 'socorro-cli search --help'.
+NOTE: 'search' uses a different data source, with different flag names and values.
 
 DATE RANGES:
     By default, crash-pings queries yesterday's data. Use --date for a specific
-    day, --days N for the last N days, or --from/--to for an arbitrary range.
-    Both --from and --to are inclusive (--from 02-10 --to 02-12 includes all
-    three days). --from without --to defaults to yesterday. Data for each date
-    is cached locally, so repeated queries are fast. Progress is shown on stderr
-    for multi-date queries.
+    day, --days N for the last N days, or --from/--to for an inclusive range.
+    Each day's data is cached locally, so repeated queries are fast. Progress
+    is shown on stderr for multi-date queries.
 
 FILTERING:
     Filters are matched client-side. Only exact match and ~ (contains) are
@@ -426,22 +250,11 @@ FILTERING:
 
 FACET FIELDS:
     signature, channel, os, process, version, arch, osversion, build_id,
-    ipc_actor, reason, type
-
-CRASH PINGS VS CRASH REPORTS:
-    | Feature         | crash-pings (this)    | crash (Socorro)          |
-    |-----------------|-----------------------|--------------------------|
-    | Opt-in/out      | Opt-out (all users)   | Opt-in (user clicks)     |
-    | Volume          | ~1.7M/day             | ~40K/day                 |
-    | Bias            | Representative sample | Biased toward submitters |
-    | Detail          | Signature + metadata  | Full minidump + stack    |
-    | Stack traces    | Symbolicated stacks   | Full native stacks       |
-
-    Use crash-pings for volume/trend analysis; use crash for deep debugging.";
+    ipc_actor, reason, type";
 
 const BUGS_ABOUT: &str = "\
 Look up Bugzilla bugs associated with crash signatures, or find signatures
-associated with specific bug IDs.
+associated with specific bug IDs. Pass either --signature or --bug-id.
 
 Socorro maintains a mapping between Bugzilla bugs and crash signatures (from
 the cf_crash_signature field in Bugzilla). This command queries that mapping.
@@ -470,17 +283,15 @@ OUTPUT:
 LIMITATIONS:
     Security-restricted Bugzilla bugs may not appear in results. Socorro syncs
     bug associations from Bugzilla periodically, and bugs that are not visible
-    to Socorro's Bugzilla API token are not included.
-
-NOTE: --signature and --bug-id are mutually exclusive. At least one must be provided.";
+    to Socorro's Bugzilla API token are not included.";
 
 const CORRELATIONS_ABOUT: &str = "\
 Show attributes that are statistically over-represented in crashes with a given
 signature compared to the overall crash population.
 
-Correlation data is pre-computed daily for the top ~200 signatures per channel
-and published to a CDN. Signatures outside the top ~200 will return a 'not found'
-error. No API token is needed.
+Correlation data is pre-computed daily (so it may be up to 24 hours stale) for
+the top ~200 signatures per channel and published to a CDN. Signatures outside
+the top ~200 will return a 'not found' error. No API token is needed.
 
 EXAMPLES:
     # Show correlations for a signature on the release channel (default)
@@ -496,12 +307,7 @@ OUTPUT FIELDS:
     sig_%       - Percentage of crashes with this signature that have this attribute
     ref_%       - Percentage of all crashes on the channel that have this attribute
     attribute   - The over-represented attribute (module, OS version, GPU, etc.)
-    prior       - Conditional: percentages when another attribute is also present
-
-LIMITATIONS:
-    - Only available for the top ~200 signatures per channel
-    - Data is refreshed daily; may be up to 24 hours stale
-    - Channels: release, beta, nightly, esr";
+    prior       - Conditional: percentages when another attribute is also present";
 
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
@@ -542,9 +348,9 @@ EXAMPLES:
     socorro-cli auth status"
         },
         after_help = if cfg!(any(target_os = "windows", target_os = "macos", feature = "secret-service")) {
-            "Run 'socorro-cli auth status' to check if a token is stored."
+            None
         } else {
-            "Set SOCORRO_API_TOKEN_PATH to a file containing your API token."
+            Some("Set SOCORRO_API_TOKEN_PATH to a file containing your API token.")
         }
     )]
     Auth {
@@ -630,7 +436,7 @@ EXAMPLES:
         #[arg(long, default_value = "10")]
         limit: usize,
 
-        /// Fetch symbolicated stack for a crash ping ID (IDs appear in crash-pings aggregation output)
+        /// Fetch symbolicated stack for a crash ping ID (IDs appear in aggregation output; --date must be the date it was listed under)
         #[arg(long, conflicts_with_all = ["days", "from", "to"])]
         stack: Option<String>,
     },
@@ -670,7 +476,7 @@ EXAMPLES:
         #[arg(long)]
         proto_signature: Option<String>,
 
-        /// Filter by product name
+        /// Filter by product name (Firefox, Fenix, Thunderbird, Firefox Focus, ...)
         #[arg(long, default_value = "Firefox")]
         product: String,
 
@@ -702,7 +508,7 @@ EXAMPLES:
         #[arg(long, value_parser = parse_date, conflicts_with_all = ["days", "from", "to"])]
         date: Option<String>,
 
-        /// Search crashes from the last N days
+        /// Search crashes from the last N days (default: 7)
         #[arg(long, conflicts_with_all = ["date", "from", "to"])]
         days: Option<u32>,
 
