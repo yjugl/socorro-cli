@@ -122,6 +122,8 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 
+- Updated all dependencies to their latest releases, including
+  `moz-cli-version-check` 0.3 and `dirs` 7.
 - Added `src/models/annotations.rs`: `AsyncShutdownTimeout` (a `Parsed`/`Raw`
   enum whose `parse()` never fails, falling back to the verbatim string for a
   malformed or unexpectedly-shaped payload), `AsyncShutdownTimeoutData`,
